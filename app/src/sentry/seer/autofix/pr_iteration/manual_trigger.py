@@ -1,0 +1,161 @@
+"""PR iteration feedback submitted from the Sentry UI.
+
+A user who wants Seer to change a pull request it already opened can type
+feedback into the autofix UI, which posts it to the group autofix endpoint
+(``GroupAutofixEndpoint``) with ``step=pr_iteration``. The endpoint hands that
+request to ``handle_ui_feedback`` here, which checks that the run can be
+iterated on, then queues the feedback and asks for it to be consumed. This
+module lives under ``pr_iteration`` so errors raised here are grouped with the
+rest of PR iteration.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
+from rest_framework.response import Response
+
+from sentry.models.group import Group
+from sentry.seer.autofix.autofix_agent import get_autofix_run_state
+from sentry.seer.autofix.constants import AutofixReferrer
+from sentry.seer.autofix.feature.dispatch import get_run_billing_feature
+from sentry.seer.autofix.pr_iteration.emit import (
+    PrIterationOutcome,
+    bootstrap_iteration,
+    record_pr_iteration_failure_reason,
+)
+from sentry.seer.autofix.pr_iteration.feedback import Feedback
+from sentry.seer.autofix.pr_iteration.feedback_sources.base import ConsumeTriggerSource
+from sentry.seer.autofix.pr_iteration.out_of_credits import mark_out_of_credits
+from sentry.seer.autofix.pr_iteration.pause import PauseReason, get_pause_reason
+from sentry.seer.autofix.pr_iteration.queue import enqueue_autofix_feedback
+from sentry.seer.credits import SeerOperation, check_seer_operation, get_denial_reason
+from sentry.seer.endpoints.utils import (
+    SEER_AUTOFIX_CONTINUE_OUT_OF_CREDITS_DETAIL,
+    SEER_PERMISSION_DENIED,
+    seer_out_of_credits_response,
+)
+from sentry.seer.models import SeerPermissionError
+from sentry.tasks.seer.pr_iteration import trigger_consume_pr_iteration_feedback
+from sentry.users.services.user.service import user_service
+
+logger = logging.getLogger(__name__)
+
+PAUSED_PR_ITERATION_DETAIL = {
+    PauseReason.USER_STOP: "Iteration was stopped for this pull request",
+    PauseReason.RUN_ERRORED: "Seer can no longer iterate on this pull request",
+    PauseReason.PR_CLOSED: "This pull request is closed, so Seer stopped iterating on it",
+    PauseReason.DRAIN_FAILED: "Seer hit an error starting its next iteration, so it stopped iterating on this pull request",
+}
+
+
+def handle_ui_feedback(
+    *,
+    group: Group,
+    run_id: int,
+    user_id: int,
+    user_feedback: str | None,
+    referrer: AutofixReferrer,
+) -> Response | None:
+    """Queue feedback a user typed in the Sentry UI and ask for it to be consumed.
+
+    Returns None once the feedback has been handed off, or the error response
+    the endpoint should send back when the request cannot be acted on: 400 when
+    the feedback is empty or the run has no pull request yet, 409 when
+    iteration on the run is paused, and 402 when the organization doesn't have
+    enough Seer credits, after holding the feedback for the next trigger after a
+    top-up. Raises ``PermissionDenied`` when Seer
+    refuses to show us the run.
+    """
+    if not user_feedback:
+        return Response(
+            {"detail": "feedback is required for pr_iteration"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        run_state = get_autofix_run_state(group, run_id)
+    except SeerPermissionError:
+        raise PermissionDenied(SEER_PERMISSION_DENIED)
+
+    if not run_state.get_created_pull_request_states():
+        return Response(
+            {"detail": "Cannot iterate on a PR before one has been created"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    pause_reason = get_pause_reason(run_id=run_id, organization_id=group.organization.id)
+    if pause_reason is not None:
+        return Response(
+            {"detail": PAUSED_PR_ITERATION_DETAIL[pause_reason]},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    # Check credits here, since the queued feedback is consumed after this request returns.
+    credits = check_seer_operation(
+        group.organization, get_run_billing_feature(run_state), SeerOperation.AUTOFIX_PR_ITERATION
+    )
+
+    serialized_users = user_service.serialize_many(
+        filter={"user_ids": [user_id]},
+    )
+    feedback = Feedback(
+        source={
+            "type": "user-ui",
+            "user_id": user_id,
+            "user": serialized_users[0] if serialized_users else None,
+            "user_feedback": user_feedback,
+        },
+    )
+
+    # Shared by both calls, so one arrival of feedback logs its queue
+    # and trigger decisions under one identity.
+    log_ctx = bootstrap_iteration(
+        logger=logger,
+        run_state=run_state,
+        organization_id=group.organization.id,
+        group_id=group.id,
+    )
+
+    enqueue_autofix_feedback(
+        log_ctx=log_ctx,
+        run_id=run_id,
+        organization_id=group.organization.id,
+        group_id=group.id,
+        feedback=feedback,
+        referrer=referrer,
+        run_state=run_state,
+        actor_user_id=user_id,
+    )
+
+    if not credits.has_enough_credits:
+        denial_reason = get_denial_reason(credits)
+        # Hold the queue until a drain after a top-up, as a refused drain does.
+        mark_out_of_credits(
+            run_id=run_id,
+            organization_id=group.organization.id,
+            denial_reason=denial_reason,
+        )
+        # Save the reason for the sweep, in case no top-up comes.
+        record_pr_iteration_failure_reason(
+            log_ctx=log_ctx,
+            run_id=run_id,
+            organization_id=group.organization.id,
+            reason=PrIterationOutcome.SENTRY_OUT_OF_CREDITS.value,
+        )
+        return seer_out_of_credits_response(
+            SEER_AUTOFIX_CONTINUE_OUT_OF_CREDITS_DETAIL, denial_reason
+        )
+
+    trigger_consume_pr_iteration_feedback(
+        log_ctx=log_ctx,
+        run_id=run_id,
+        organization_id=group.organization.id,
+        feedback=feedback,
+        run_state=run_state,
+        source=ConsumeTriggerSource.UI_CONSUME,
+    )
+
+    return None

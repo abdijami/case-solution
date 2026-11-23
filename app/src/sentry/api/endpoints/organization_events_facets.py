@@ -1,0 +1,127 @@
+from collections import defaultdict
+from typing import TypedDict
+
+from drf_spectacular.utils import extend_schema
+from rest_framework.request import Request
+from rest_framework.response import Response
+from sentry_sdk import traces
+
+from sentry import tagstore
+from sentry.api.api_publish_status import ApiPublishStatus
+from sentry.api.base import cell_silo_endpoint
+from sentry.api.bases import NoProjects, OrganizationEventsEndpointBase
+from sentry.api.paginator import GenericOffsetPaginator
+from sentry.api.utils import handle_query_errors, update_snuba_params_with_timestamp
+from sentry.apidocs.constants import RESPONSE_NOT_FOUND
+from sentry.apidocs.utils import inline_sentry_response_serializer
+from sentry.models.organization import Organization
+from sentry.search.utils import DEVICE_CLASS
+
+
+class _TopValue(TypedDict):
+    name: str | None
+    value: int | str
+    count: int
+
+
+class _KeyTopValues(TypedDict):
+    key: str
+    topValues: list[_TopValue]
+
+
+@cell_silo_endpoint
+class OrganizationEventsFacetsEndpoint(OrganizationEventsEndpointBase):
+    publish_status = {
+        "GET": ApiPublishStatus.PRIVATE,
+    }
+
+    @extend_schema(
+        responses={
+            200: inline_sentry_response_serializer(
+                "OrganizationEventsFacetsResponse", list[_KeyTopValues]
+            ),
+            404: RESPONSE_NOT_FOUND,
+        },
+    )
+    def get(self, request: Request, organization: Organization) -> Response:
+        try:
+            snuba_params = self.get_snuba_params(request, organization)
+        except NoProjects:
+            return Response([])
+
+        with handle_query_errors():
+            update_snuba_params_with_timestamp(
+                request, snuba_params, timestamp_key="traceTimestamp"
+            )
+
+        dataset = self.get_dataset(request, organization)
+
+        def data_fn(offset: int, limit: int) -> list[_KeyTopValues]:
+            with traces.start_span(
+                name="discover_query", attributes={"sentry.op": "discover.endpoint"}
+            ):
+                with handle_query_errors():
+                    facets = dataset.get_facets(
+                        query=request.GET.get("query"),
+                        snuba_params=snuba_params,
+                        referrer="api.organization-events-facets.top-tags",
+                        per_page=limit,
+                        cursor=offset,
+                    )
+
+            with traces.start_span(
+                name="populate_results",
+                attributes={
+                    "sentry.op": "discover.endpoint",
+                    "facet_count": len(facets or []),
+                },
+            ):
+                resp: dict[str, _KeyTopValues]
+                resp = defaultdict(lambda: {"key": "", "topValues": []})
+                for row in facets:
+                    values = resp[row.key]
+                    values["key"] = tagstore.backend.get_standardized_key(row.key)
+                    values["topValues"].append(
+                        {
+                            "name": tagstore.backend.get_tag_value_label(row.key, row.value),
+                            "value": row.value,
+                            "count": row.count,
+                        }
+                    )
+
+                if "project" in resp:
+                    # Replace project ids with slugs as that is what we generally expose to users
+                    # and filter out projects that the user doesn't have access too.
+                    projects = {p.id: p.slug for p in self.get_projects(request, organization)}
+                    filtered_values = []
+                    for v in resp["project"]["topValues"]:
+                        if isinstance(v["value"], int) and v["value"] in projects:
+                            name = projects[v["value"]]
+                            v.update({"name": name})
+                            filtered_values.append(v)
+
+                    resp["project"]["topValues"] = filtered_values
+
+                if "device.class" in resp:
+                    # Map device.class tag values to low, medium, or high
+                    filtered_values = []
+                    for v in resp["device.class"]["topValues"]:
+                        for key, value in DEVICE_CLASS.items():
+                            if v["value"] in value:
+                                v.update({"name": key, "value": key})
+                                filtered_values.append(v)
+                                continue
+
+                    resp["device.class"]["topValues"] = filtered_values
+
+            return list(resp.values())
+
+        if request.GET.get("includeAll"):
+            return Response(data_fn(0, 10000))
+
+        return self.paginate(
+            request=request,
+            paginator=GenericOffsetPaginator(data_fn=data_fn),
+            default_per_page=10,
+            on_results=lambda results: sorted(results, key=lambda result: str(result.get("key"))),
+        )

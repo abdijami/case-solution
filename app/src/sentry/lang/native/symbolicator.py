@@ -1,0 +1,612 @@
+from __future__ import annotations
+
+import dataclasses
+import logging
+import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import timedelta
+from enum import Enum
+from typing import Any, cast
+from urllib.parse import urljoin
+
+import orjson
+import sentry_sdk
+from django.conf import settings
+from requests.exceptions import RequestException
+
+from sentry import features
+from sentry.attachments.base import CachedAttachment
+from sentry.lang.native.sources import (
+    get_internal_artifact_lookup_source,
+    get_internal_source,
+    get_scraping_config,
+    sources_for_symbolication,
+)
+from sentry.lang.native.utils import Backoff
+from sentry.models.project import Project
+from sentry.net.http import Session
+from sentry.objectstore import UsecaseId, get_internal_download_url, get_session
+from sentry.utils import metrics
+
+MAX_ATTEMPTS = 3
+
+BACKOFF_INITIAL = 0.1
+BACKOFF_MAX = 5
+
+# Symbolicator runs up to 3 tries with 5 minute timeouts
+TOKEN_VALIDITY = timedelta(minutes=15)
+
+logger = logging.getLogger(__name__)
+
+
+class SymbolicatorFunction(Enum):
+    """The functions for which we want to
+    invoke Symbolicator."""
+
+    jvm = "jvm"
+    js = "js"
+    native = "native"
+    minidump = "minidump"
+    applecrashreport = "applecrashreport"
+
+    def __call__(self, symbolicator: Symbolicator, data: Any) -> Any:
+        return self.function()(symbolicator, data)
+
+    def function(self) -> Callable[[Symbolicator, Any], Any]:
+        from sentry.lang.java.processing import process_jvm_stacktraces
+        from sentry.lang.javascript.processing import process_js_stacktraces
+        from sentry.lang.native.processing import (
+            process_applecrashreport,
+            process_minidump,
+            process_native_stacktraces,
+        )
+
+        match self:
+            case SymbolicatorFunction.native:
+                return process_native_stacktraces
+            case SymbolicatorFunction.js:
+                return process_js_stacktraces
+            case SymbolicatorFunction.jvm:
+                return process_jvm_stacktraces
+            case SymbolicatorFunction.minidump:
+                return process_minidump
+            case SymbolicatorFunction.applecrashreport:
+                return process_applecrashreport
+
+
+class FrameOrder(Enum):
+    """The order in which stack frames are sent to
+    and returned from Symbolicator."""
+
+    # Caller frames come before callee frames. This is the
+    # order in which stack frames are stored in events.
+    caller_first = "caller_first"
+    # Callee frames come before caller frames. This is the
+    # order in which stack frames are usually displayed.
+    callee_first = "callee_first"
+
+
+@dataclass(frozen=True)
+class SymbolicatorTaskKind:
+    """Bundles information about a symbolication task:
+    the platform and whether it's an existing event being reprocessed.
+    """
+
+    function: SymbolicatorFunction
+    is_reprocessing: bool = False
+
+    def with_function(self, function: SymbolicatorFunction) -> SymbolicatorTaskKind:
+        return dataclasses.replace(self, function=function)
+
+
+class SymbolicatorPools(Enum):
+    default = "default"
+    js = "js"
+    jvm = "jvm"
+
+
+def pool_for_function(function: SymbolicatorFunction) -> SymbolicatorPools:
+    """Returns the Symbolicator pool to use to symbolicate events for
+    the given platform.
+    """
+    match function:
+        case SymbolicatorFunction.native:
+            return SymbolicatorPools.default
+        case SymbolicatorFunction.js:
+            return SymbolicatorPools.js
+        case SymbolicatorFunction.jvm:
+            return SymbolicatorPools.jvm
+        case SymbolicatorFunction.minidump:
+            return SymbolicatorPools.default
+        case SymbolicatorFunction.applecrashreport:
+            return SymbolicatorPools.default
+
+
+class Symbolicator:
+    def __init__(
+        self,
+        task_kind: SymbolicatorTaskKind,
+        on_request: Callable[[], None],
+        project: Project,
+        event_id: str,
+    ):
+        URLS = settings.SYMBOLICATOR_POOL_URLS
+        pool = pool_for_function(task_kind.function)
+
+        base_url = (
+            URLS.get(pool.value)
+            or URLS.get(SymbolicatorPools.default.value)
+            or settings.SENTRY_SYMBOLICATOR_OPTIONS["url"]
+        )
+        base_url = base_url.rstrip("/")
+        assert base_url
+
+        self.base_url = base_url
+        self.on_request = on_request
+        self.project = project
+        self.event_id = event_id
+
+    def _process(
+        self,
+        task_name: str,
+        path: str,
+        kwargs_cb: Callable[[], dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """
+        This function will submit a symbolication task to a Symbolicator and handle
+        polling it using the `SymbolicatorSession`.
+        It will also correctly handle `TaskIdNotFound` and `ServiceUnavailable` errors.
+
+        `kwargs_cb`, if provided, is called on every new task submission and its result
+        is merged over `kwargs`. Use this for values that must be fresh on each
+        (re)submission, such as expiring tokens.
+        """
+        session = SymbolicatorSession(
+            url=self.base_url,
+            project_id=str(self.project.id),
+            event_id=str(self.event_id),
+            timeout=settings.SYMBOLICATOR_POLL_TIMEOUT,
+        )
+
+        task_id: str | None = None
+        json_response: dict[str, Any] | None = None
+
+        backoff = Backoff(BACKOFF_INITIAL, BACKOFF_MAX)
+
+        with session:
+            while True:
+                try:
+                    if not task_id:
+                        # We are submitting a new task to Symbolicator
+                        create_kwargs = {**kwargs, **(kwargs_cb() if kwargs_cb else {})}
+                        json_response = session.create_task(path, **create_kwargs)
+                    else:
+                        # The task has already been submitted to Symbolicator and we are polling
+                        json_response = session.query_task(task_id)
+                except TaskIdNotFound:
+                    # We have started a task on Symbolicator and are polling, but the task went away.
+                    # This can happen when Symbolicator was restarted or the load balancer routing changed in some way.
+                    # We can just re-submit the task using the same `session` and try again. We use the same `session`
+                    # to avoid the likelihood of this happening again. When Symbolicators are restarted due to a deploy
+                    # in a staggered fashion, we do not want to create a new `session`, being assigned a different
+                    # Symbolicator instance just to it restarted next.
+                    task_id = None
+                    backoff.reset()
+                    continue
+                except ServiceUnavailable:
+                    # This error means that the Symbolicator instance bound to our `session` is not healthy.
+                    # By resetting the `worker_id`, the load balancer will route us to a different
+                    # Symbolicator instance.
+                    session.reset_worker_id()
+                    task_id = None
+                    # Backoff on repeated failures to create or query a task.
+                    backoff.sleep_failure()
+                    continue
+                finally:
+                    self.on_request()
+
+                backoff.reset()
+                metrics.incr(
+                    "events.symbolicator.response",
+                    tags={
+                        "response": json_response.get("status") or "null",
+                        "task_name": task_name,
+                    },
+                )
+
+                if json_response["status"] == "pending":
+                    # Symbolicator was not able to process the whole task within one timeout period.
+                    # Start polling using the `request_id`/`task_id`.
+                    task_id = json_response["request_id"]
+                    continue
+
+                # Otherwise, we are done processing, yay
+                return json_response
+
+    def process_minidump(
+        self, platform: str | None, minidump: CachedAttachment, rewrite_first_module: list[Any]
+    ) -> dict[str, Any]:
+        (sources, process_response) = sources_for_symbolication(self.project, self.event_id)
+        scraping_config = get_scraping_config(self.project)
+
+        if minidump.stored_id:
+            stored_id = minidump.stored_id
+            session = get_session(UsecaseId.ATTACHMENTS, self.project)
+            json: dict[str, Any] = {
+                "platform": platform,
+                "sources": sources,
+                "scraping": scraping_config,
+                "options": {
+                    "dif_candidates": True,
+                    "extract_variables": self._should_extract_variables(),
+                    "apply_source_server_info": self._should_apply_source_server_info(),
+                },
+                "symbolicate": {
+                    "type": "minidump",
+                    "rewrite_first_module": rewrite_first_module,
+                },
+            }
+
+            def cb() -> dict[str, Any]:
+                json["symbolicate"]["storage_url"] = get_internal_download_url(
+                    session, stored_id, token_validity=TOKEN_VALIDITY
+                )
+                return {"json": json}
+
+            res = self._process("process_minidump", "symbolicate-any", kwargs_cb=cb)
+            return process_response(res)
+
+        data = {
+            "platform": orjson.dumps(platform).decode(),
+            "sources": orjson.dumps(sources).decode(),
+            "scraping": orjson.dumps(scraping_config).decode(),
+            "options": orjson.dumps(
+                {
+                    "dif_candidates": True,
+                    "extract_variables": self._should_extract_variables(),
+                    "apply_source_server_info": self._should_apply_source_server_info(),
+                }
+            ).decode(),
+            "rewrite_first_module": orjson.dumps(rewrite_first_module).decode(),
+        }
+        files = {"upload_file_minidump": minidump.load_data(self.project)}
+
+        res = self._process("process_minidump", "minidump", data=data, files=files)
+        return process_response(res)
+
+    def process_applecrashreport(
+        self, platform: str | None, report: CachedAttachment
+    ) -> dict[str, Any]:
+        (sources, process_response) = sources_for_symbolication(self.project, self.event_id)
+        scraping_config = get_scraping_config(self.project)
+
+        if report.stored_id:
+            stored_id = report.stored_id
+            session = get_session(UsecaseId.ATTACHMENTS, self.project)
+            json: dict[str, Any] = {
+                "platform": platform,
+                "sources": sources,
+                "scraping": scraping_config,
+                "options": {
+                    "dif_candidates": True,
+                    "extract_variables": self._should_extract_variables(),
+                },
+                "symbolicate": {
+                    "type": "applecrashreport",
+                },
+            }
+
+            def cb() -> dict[str, Any]:
+                json["symbolicate"]["storage_url"] = get_internal_download_url(
+                    session, stored_id, token_validity=TOKEN_VALIDITY
+                )
+                return {"json": json}
+
+            res = self._process("process_applecrashreport", "symbolicate-any", kwargs_cb=cb)
+            return process_response(res)
+
+        data = {
+            "platform": orjson.dumps(platform).decode(),
+            "sources": orjson.dumps(sources).decode(),
+            "scraping": orjson.dumps(scraping_config).decode(),
+            "options": orjson.dumps(
+                {"dif_candidates": True, "extract_variables": self._should_extract_variables()}
+            ).decode(),
+        }
+        files = {"apple_crash_report": report.load_data(self.project)}
+
+        res = self._process("process_applecrashreport", "applecrashreport", data=data, files=files)
+        return process_response(res)
+
+    def process_payload(
+        self,
+        platform: str | None,
+        stacktraces: list[dict[str, Any]],
+        modules: list[dict[str, Any]],
+        frame_order: FrameOrder,
+        signal: int | None = None,
+        apply_source_context: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Process a native event by symbolicating its frames.
+
+        :param platform: The event's platform. This should be either unset or one of "objc", "cocoa", "swift", "native", "c", "csharp".
+        :param stacktraces: The event's stacktraces. Frames must contain an `instruction_address`.
+                            Frames are expected to be ordered according to the frame_order (see below).
+        :param modules: ProGuard modules and source bundles. They must contain a `uuid` and have a
+                        `type` of either "proguard" or "source".
+        :param frame_order: The order of frames within stacktraces. See the documentation of `FrameOrder`.
+        :param signal: A numeric crash signal value. This is optional.
+        :param apply_source_context: Whether to add source context to frames.
+        """
+        (sources, process_response) = sources_for_symbolication(self.project, self.event_id)
+        scraping_config = get_scraping_config(self.project)
+        json: dict[str, Any] = {
+            "platform": platform,
+            "sources": sources,
+            "options": {
+                "dif_candidates": True,
+                "apply_source_context": apply_source_context,
+                "frame_order": frame_order.value,
+                "extract_variables": self._should_extract_variables(),
+                "apply_source_server_info": self._should_apply_source_server_info(),
+            },
+            "stacktraces": stacktraces,
+            "modules": modules,
+            "scraping": scraping_config,
+        }
+
+        if signal:
+            json["signal"] = signal
+
+        res = self._process("symbolicate_stacktraces", "symbolicate", json=json)
+        return process_response(res)
+
+    def process_js(
+        self,
+        platform: str | None,
+        stacktraces: list[dict[str, Any]],
+        modules: list[dict[str, Any]],
+        release: str | None,
+        dist: str | None,
+        frame_order: FrameOrder,
+        apply_source_context: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Process a JS event by remapping its frames with sourcemaps.
+
+        :param platform: The event's platform. This should be unset, "javascript", or "node".
+        :param stacktraces: The event's stacktraces. Frames must contain a `function` and a `module`.
+                            Frames are expected to be ordered according to the frame_order (see below).
+        :param modules: Minified source files/sourcemaps Thy must contain a `type` field with value "sourcemap",
+                        a `code_file`, and a `debug_id`.
+        :param release: The event's release.
+        :param dist: The event's dist.
+        :param frame_order: The order of frames within stacktraces. See the documentation of `FrameOrder`.
+        :param apply_source_context: Whether to add source context to frames.
+        """
+        source = get_internal_artifact_lookup_source(self.project)
+        scraping_config = get_scraping_config(self.project)
+
+        json = {
+            "platform": platform,
+            "source": source,
+            "stacktraces": stacktraces,
+            "modules": modules,
+            "options": {
+                "apply_source_context": apply_source_context,
+                "frame_order": frame_order.value,
+                "extract_variables": self._should_extract_variables(),
+            },
+            "scraping": scraping_config,
+        }
+
+        if release is not None:
+            json["release"] = release
+        if dist is not None:
+            json["dist"] = dist
+
+        return self._process("symbolicate_js_stacktraces", "symbolicate-js", json=json)
+
+    def process_jvm(
+        self,
+        platform: str | None,
+        exceptions: list[dict[str, Any]],
+        stacktraces: list[dict[str, Any]],
+        modules: list[dict[str, Any]],
+        classes: list[str],
+        frame_order: FrameOrder,
+        apply_source_context: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Process a JVM event by remapping its frames and exceptions with
+        ProGuard.
+
+        :param platform: The event's platform. This should be either unset or "java".
+        :param exceptions: The event's exceptions. These must contain a `type` and a `module`.
+        :param stacktraces: The event's stacktraces. Frames must contain a `function` and a `module`.
+                            Frames are expected to be ordered according to the frame_order (see below).
+        :param modules: ProGuard modules and source bundles. They must contain a `uuid` and have a
+                        `type` of either "proguard" or "source".
+        :param frame_order: The order of frames within stacktraces. See the documentation of `FrameOrder`.
+        :param apply_source_context: Whether to add source context to frames.
+        """
+        source = get_internal_source(self.project)
+
+        json = {
+            "platform": platform,
+            "sources": [source],
+            "exceptions": exceptions,
+            "stacktraces": stacktraces,
+            "modules": modules,
+            "classes": classes,
+            "options": {
+                "apply_source_context": apply_source_context,
+                "frame_order": frame_order.value,
+                "extract_variables": self._should_extract_variables(),
+            },
+        }
+
+        return self._process("symbolicate_jvm_stacktraces", "symbolicate-jvm", json=json)
+
+    def _should_extract_variables(self) -> bool:
+        """Helper for determining whether to extract variables.
+
+        This just reads the "organizations:native-variable-extraction" feature flag.
+        """
+        return features.has("organizations:native-variable-extraction", self.project.organization)
+
+    def _should_apply_source_server_info(self) -> bool:
+        return self.project.get_option("sentry:enable_native_source_server_mapping")
+
+
+class TaskIdNotFound(Exception):
+    pass
+
+
+class ServiceUnavailable(Exception):
+    pass
+
+
+class SymbolicatorSession:
+    """
+    The `SymbolicatorSession` is a glorified HTTP request wrapper that does the following things:
+
+    - Maintains a `worker_id` which is used downstream in the load balancer for routing.
+    - Maintains `timeout` parameters which are passed to Symbolicator.
+    - Converts 404 and 503 errors into proper classes so they can be handled upstream.
+    - Otherwise, it retries failed requests.
+    """
+
+    def __init__(
+        self,
+        url: str | None = None,
+        project_id: str | None = None,
+        event_id: str | None = None,
+        timeout: float | None = None,
+    ) -> None:
+        self.url = url
+        self.project_id = project_id
+        self.event_id = event_id
+        self.timeout = timeout
+        self.session: Session | None = None
+        self.reset_worker_id()
+
+    def __enter__(self) -> SymbolicatorSession:
+        self.open()
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    def open(self) -> None:
+        if self.session is None:
+            self.session = Session()
+
+    def close(self) -> None:
+        if self.session is not None:
+            self.session.close()
+            self.session = None
+
+    def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        if not self.session:
+            raise RuntimeError("Session not opened")
+
+        url = urljoin(cast(str, self.url), path)
+
+        # required for load balancing
+        kwargs.setdefault("headers", {})["x-sentry-project-id"] = self.project_id
+        kwargs.setdefault("headers", {})["x-sentry-event-id"] = self.event_id
+        kwargs.setdefault("headers", {})["x-sentry-worker-id"] = self.worker_id
+
+        attempts = 0
+        wait = 0.5
+
+        while True:
+            try:
+                with metrics.timer(
+                    "events.symbolicator.session.request", tags={"attempt": attempts}
+                ):
+                    response = self.session.request(
+                        method, url, timeout=cast(float, self.timeout) + 1, **kwargs
+                    )
+
+                metrics.incr(
+                    "events.symbolicator.status_code",
+                    tags={"status_code": response.status_code},
+                )
+
+                if (
+                    method.lower() == "get"
+                    and path.startswith("requests/")
+                    and response.status_code == 404
+                ):
+                    # The symbolicator does not know this task. This is
+                    # expected to happen when we're currently deploying
+                    # symbolicator (which will clear all of its state). Re-send
+                    # the symbolication task.
+                    raise TaskIdNotFound()
+
+                if response.status_code in (502, 503):
+                    raise ServiceUnavailable()
+
+                if response.ok:
+                    payload = response.json()
+                    json = payload
+
+                    if json["status"] != "pending":
+                        metrics.distribution(
+                            "events.symbolicator.response.completed.size",
+                            len(response.content),
+                            unit="byte",
+                        )
+                else:
+                    with sentry_sdk.isolation_scope():
+                        sentry_sdk.set_extra("symbolicator_response", response.text)
+                        sentry_sdk.capture_message("Symbolicator request failed")
+
+                    json = {"status": "failed", "message": "internal server error"}
+
+                return json
+            except (OSError, RequestException) as e:
+                metrics.incr(
+                    "events.symbolicator.request_error",
+                    tags={
+                        "exc": ".".join([e.__class__.__module__, e.__class__.__name__]),
+                        "attempt": attempts,
+                    },
+                )
+
+                attempts += 1
+                # Any server error needs to be treated as a failure. We can
+                # retry a couple of times, but ultimately need to bail out.
+                #
+                # This can happen for any network failure.
+                if attempts > MAX_ATTEMPTS:
+                    logger.exception("Failed to contact symbolicator")
+                    raise
+
+                time.sleep(wait)
+                wait *= 2.0
+
+    def create_task(self, path: str, **kwargs: Any) -> dict[str, Any]:
+        params = {"timeout": self.timeout, "scope": self.project_id}
+
+        with metrics.timer(
+            "events.symbolicator.create_task",
+            tags={"path": path},
+        ):
+            return self._request(method="post", path=path, params=params, **kwargs)
+
+    def query_task(self, task_id: str) -> dict[str, Any]:
+        params = {"timeout": self.timeout, "scope": self.project_id}
+        task_url = f"requests/{task_id}"
+
+        with metrics.timer("events.symbolicator.query_task"):
+            return self._request("get", task_url, params=params)
+
+    def reset_worker_id(self) -> None:
+        self.worker_id = uuid.uuid4().hex

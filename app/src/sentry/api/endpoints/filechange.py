@@ -1,0 +1,93 @@
+from rest_framework.request import Request
+from rest_framework.response import Response
+
+from sentry.api.api_owners import ApiOwner
+from sentry.api.api_publish_status import ApiPublishStatus
+from sentry.api.base import cell_silo_endpoint
+from sentry.api.bases.organization import OrganizationReleasesBaseEndpoint
+from sentry.api.exceptions import ResourceDoesNotExist
+from sentry.api.paginator import OffsetPaginator
+from sentry.api.serializers import serialize
+from sentry.constants import ObjectStatus
+from sentry.models.commit import Commit
+from sentry.models.commitfilechange import CommitFileChange
+from sentry.models.organization import Organization
+from sentry.models.release import Release
+from sentry.models.releasecommit import ReleaseCommit
+from sentry.models.repository import Repository
+
+
+@cell_silo_endpoint
+class CommitFileChangeEndpoint(OrganizationReleasesBaseEndpoint):
+    owner = ApiOwner.ISSUES
+    publish_status = {
+        "GET": ApiPublishStatus.PRIVATE,
+    }
+
+    def get(self, request: Request, organization: Organization, version: str) -> Response:
+        """
+        Retrieve Files Changed in a Release's Commits
+        `````````````````````````````````````````````
+
+        Retrieve a list of files that were changed in a given release's commits.
+
+        :pparam string organization_id_or_slug: the id or slug of the organization the
+                                          release belongs to.
+        :pparam string version: the version identifier of the release.
+
+        :pparam string repo_name: the repository name
+
+        :auth: required
+
+
+        """
+
+        try:
+            release = Release.objects.get(organization=organization, version=version)
+        except Release.DoesNotExist:
+            raise ResourceDoesNotExist
+
+        if not self.has_release_permission(request, organization, release):
+            raise ResourceDoesNotExist
+
+        release_commit_ids = list(
+            ReleaseCommit.objects.filter(release=release).values_list("commit_id", flat=True)
+        )
+
+        queryset = CommitFileChange.objects.filter(commit_id__in=release_commit_ids)
+
+        repo_id = request.query_params.get("repo_id")
+        repo_name = request.query_params.get("repo_name")
+
+        if repo_id or repo_name:
+            # Neither parameter names a provider, and an external id is only unique per
+            # provider, so resolve against the repositories that actually have commits in
+            # this release. Re-linking leaves duplicates that differ in provider or config;
+            # every match contributes its commits rather than guessing which was meant.
+            release_repos = Repository.objects.filter(
+                organization_id=organization.id,
+                id__in=Commit.objects.filter(id__in=release_commit_ids).values("repository_id"),
+                status=ObjectStatus.ACTIVE,
+            )
+            if repo_id:
+                release_repos = release_repos.filter(external_id=repo_id)
+            else:
+                release_repos = release_repos.filter(name=repo_name)
+            repo_ids = list(release_repos.values_list("id", flat=True))
+            if not repo_ids:
+                raise ResourceDoesNotExist
+
+            commit_ids_for_repos = list(
+                Commit.objects.filter(
+                    id__in=release_commit_ids, repository_id__in=repo_ids
+                ).values_list("id", flat=True)
+            )
+            queryset = queryset.filter(commit_id__in=commit_ids_for_repos)
+
+        return self.paginate(
+            request=request,
+            queryset=queryset,
+            order_by="filename",
+            paginator_cls=OffsetPaginator,
+            on_results=lambda x: serialize(x, request.user),
+        )

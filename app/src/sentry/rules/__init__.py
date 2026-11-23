@@ -1,0 +1,23 @@
+from .base import RuleBase
+from .registry import RuleRegistry
+
+__all__ = (
+    "init_registry",
+    "RuleBase",
+    "rules",
+)
+
+
+def init_registry() -> RuleRegistry:
+    from sentry.constants import _SENTRY_RULES
+    from sentry.utils.imports import import_string
+
+    registry = RuleRegistry()
+    for rule in _SENTRY_RULES:
+        cls = import_string(rule)
+        registry.add(cls)
+
+    return registry
+
+
+rules = init_registry()

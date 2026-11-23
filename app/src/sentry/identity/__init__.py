@@ -1,0 +1,39 @@
+from .manager import IdentityManager
+
+default_manager = IdentityManager()
+all = default_manager.all
+get = default_manager.get
+exists = default_manager.exists
+register = default_manager.register
+unregister = default_manager.unregister
+is_login_provider = default_manager.is_login_provider
+
+
+def _register_providers() -> None:
+    from .datadog.provider import DatadogIdentityProvider, DatadogPatIdentityProvider
+    from .discord.provider import DiscordIdentityProvider
+    from .gcp.provider import GCPIdentityProvider
+    from .github.provider import GitHubIdentityProvider
+    from .github_enterprise.provider import GitHubEnterpriseIdentityProvider
+    from .gitlab.provider import GitlabIdentityProvider
+    from .google.provider import GoogleIdentityProvider
+    from .slack.provider import SlackIdentityProvider, SlackStagingIdentityProvider
+    from .vsts.provider import VSTSIdentityProvider, VSTSNewIdentityProvider
+
+    # TODO(epurkhiser): Should this be moved into it's own plugin, it should be
+    # initialized there.
+    register(SlackIdentityProvider)
+    register(SlackStagingIdentityProvider)
+    register(GitHubIdentityProvider)
+    register(GitHubEnterpriseIdentityProvider)
+    register(VSTSNewIdentityProvider)
+    register(VSTSIdentityProvider)
+    register(GitlabIdentityProvider)
+    register(GoogleIdentityProvider)
+    register(DiscordIdentityProvider)
+    register(DatadogIdentityProvider)
+    register(DatadogPatIdentityProvider)
+    register(GCPIdentityProvider)
+
+
+_register_providers()

@@ -1,0 +1,49 @@
+from typing import TYPE_CHECKING, TypeVar
+
+from rest_framework.response import Response
+
+from sentry.api.base import control_silo_endpoint
+from sentry.integrations.source_code_management.issues import SourceCodeIssueIntegration
+from sentry.integrations.source_code_management.metrics import SCMIntegrationInteractionType
+from sentry.integrations.source_code_management.search import SourceCodeSearchEndpoint
+from sentry.integrations.types import IntegrationProviderSlug
+from sentry.integrations.vsts.integration import VstsIntegration
+
+T = TypeVar("T", bound=SourceCodeIssueIntegration)
+
+if TYPE_CHECKING:
+    _SearchEndpointBase = SourceCodeSearchEndpoint[VstsIntegration]
+else:
+    _SearchEndpointBase = SourceCodeSearchEndpoint
+
+
+@control_silo_endpoint
+class VstsSearchEndpoint(_SearchEndpointBase):
+    @property
+    def integration_provider(self) -> str:
+        return IntegrationProviderSlug.AZURE_DEVOPS.value
+
+    @property
+    def installation_class(self) -> type[VstsIntegration]:
+        return VstsIntegration
+
+    def handle_search_issues(self, installation: T, query: str, repo: str | None) -> Response:
+        with self.record_event(
+            SCMIntegrationInteractionType.HANDLE_SEARCH_ISSUES,
+            organization_id=installation.organization_id,
+            integration_id=installation.org_integration.integration_id,
+        ).capture():
+            if not query:
+                return Response([])
+
+            assert isinstance(installation, self.installation_class)
+            resp = installation.search_issues(query=query)
+            return Response(
+                [
+                    {
+                        "label": f"({i['fields']['system.id']}) {i['fields']['system.title']}",
+                        "value": i["fields"]["system.id"],
+                    }
+                    for i in resp.get("results", [])
+                ]
+            )

@@ -1,0 +1,622 @@
+from __future__ import annotations
+
+import multiprocessing
+import os
+import shlex
+import signal
+import sys
+import threading
+import time
+import traceback
+from collections import defaultdict
+from collections.abc import MutableSequence, Sequence
+from pathlib import Path
+from typing import IO, NoReturn
+
+import click
+import sentry_sdk
+from confluent_kafka import KafkaException
+from confluent_kafka.admin import AdminClient
+from sentry_kafka_schemas import list_topics
+from sentry_sdk import traces
+
+from sentry.runner.commands.devservices import get_docker_client
+from sentry.runner.decorators import log_options, settings_configuration
+from sentry.utils.batching_kafka_consumer import create_topics
+from sentry.utils.kafka_config import get_kafka_admin_cluster_options, get_topic_definition
+
+# NOTE: These do NOT start automatically. Add your daemon to the `daemons` list
+# in `devserver()` like so:
+#     daemons += [_get_daemon("my_new_daemon")]
+#
+# If you are looking to add a kafka consumer, please do not create a new click
+# subcommand. Instead, use sentry.consumers.
+_DEFAULT_DAEMONS = {
+    "server": ["sentry", "run", "web"],
+    "taskworker": ["sentry", "run", "taskworker"],
+    "taskworker-scheduler": ["sentry", "run", "taskworker-scheduler"],
+}
+
+
+def add_daemon(name: str, command: list[str]) -> None:
+    """
+    Used by getsentry to add additional workers to the devserver setup.
+    """
+    if name in _DEFAULT_DAEMONS:
+        raise KeyError(f"The {name} worker has already been defined")
+    _DEFAULT_DAEMONS[name] = command
+
+
+# The eventstream backends whose `requires_post_process_forwarder()` is True.
+# Asking the backend would import models, which the devserver doesn't load.
+_POST_PROCESS_FORWARDER_EVENTSTREAMS = frozenset(
+    (
+        "sentry.eventstream.kafka.KafkaEventStream",
+        "sentry.eventstream.kafka.backend.KafkaEventStream",
+    )
+)
+
+
+def _get_daemon(name: str) -> tuple[str, list[str]]:
+    return name, _DEFAULT_DAEMONS[name]
+
+
+def _get_taskworker_daemon(reload: bool) -> tuple[str, list[str]]:
+    name, command = _get_daemon("taskworker")
+    if reload:
+        command = [*command, "--autoreload"]
+    return name, command
+
+
+_KAFKA_TIMEOUT_SECONDS = 60
+
+
+def _wait_for_kafka(cluster: str, output: IO[str]) -> None:
+    conf = get_kafka_admin_cluster_options(cluster)
+    servers = conf["bootstrap.servers"]
+    deadline = time.monotonic() + _KAFKA_TIMEOUT_SECONDS
+    waiting = False
+    # A client that can't reach Kafka backs off for up to 10s, so probe with a
+    # fresh client until Kafka answers. log_level 0 replaces the connect error
+    # that librdkafka logs on every attempt with one waiting line.
+    while True:
+        try:
+            AdminClient({**conf, "log_level": 0}).list_topics(timeout=1)
+            return
+        except KafkaException as e:
+            if not waiting:
+                click.echo(f"waiting for kafka at {servers}", file=output)
+                waiting = True
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Kafka at {servers} didn't answer within {_KAFKA_TIMEOUT_SECONDS}s"
+                ) from e
+            time.sleep(0.5)
+
+
+def _create_kafka_topics_or_stop(topics_ready: Path, output: IO[str], devserver_pid: int) -> None:
+    """
+    Wait for Kafka, create every topic, then create `topics_ready`, which the
+    consumers wait for before they subscribe. Runs in the background so the web
+    doesn't wait for Kafka. A failure stops the devserver.
+    """
+    try:
+        topics_by_cluster: defaultdict[str, list[str]] = defaultdict(list)
+        for topic in list_topics():
+            topic_defn = get_topic_definition(topic)
+            topics_by_cluster[topic_defn["cluster"]].append(topic_defn["real_topic_name"])
+
+        for cluster, topic_names in topics_by_cluster.items():
+            _wait_for_kafka(cluster, output)
+            create_topics(cluster, topic_names)
+
+        topics_ready.touch()
+    except Exception:
+        traceback.print_exc(file=output)
+        os.kill(devserver_pid, signal.SIGTERM)
+
+
+def _after_kafka_topics(topics_ready: Path, command: str) -> str:
+    # honcho runs each command with `sh`. A consumer that subscribes before its
+    # topic exists crashes with UNKNOWN_TOPIC_OR_PART, which stops everything.
+    return f"until [ -e {shlex.quote(str(topics_ready))} ]; do sleep 0.2; done; exec {command}"
+
+
+@click.command()
+@click.option(
+    "--reload/--no-reload",
+    default=True,
+    help="Autoreloading of python files.",
+)
+@click.option(
+    "--watchers/--no-watchers",
+    default=True,
+    help="Watch static files and recompile on changes.",
+)
+@click.option(
+    "--ingest/--no-ingest",
+    default=False,
+    help="Run ingest services (including Relay).",
+)
+@click.option(
+    "--occurrence-ingest/--no-occurrence-ingest",
+    default=False,
+    help="Run ingest services for occurrences.",
+)
+@click.option(
+    "--prefix/--no-prefix",
+    default=True,
+    help="Show the service name prefix and timestamp",
+)
+@click.option(
+    "--dev-consumer/--no-dev-consumer",
+    default=False,
+    help="Fold multiple kafka consumers into one process using 'sentry run dev-consumer'.",
+)
+@click.option(
+    "--pretty/--no-pretty",
+    default=False,
+    help="Stylize various outputs from the devserver",
+)
+@click.option(
+    "--environment",
+    default="development",
+    help="The environment name.",
+)
+@click.option(
+    "--debug-server/--no-debug-server",
+    default=False,
+    required=False,
+    help="Start web server in same process",
+)
+@click.option(
+    "--experimental-spa/--no-experimental-spa",
+    default=False,
+    help="This enables running sentry with pure separation of the frontend and backend",
+)
+@click.option(
+    "--client-hostname",
+    default="localhost",
+    help="The hostname that clients will use. Useful for ngrok workflows eg `--client-hostname=alice.ngrok.io`",
+)
+@click.option(
+    "--ngrok",
+    default=None,
+    required=False,
+    help=(
+        "The hostname that you have ngrok forwarding to your devserver. "
+        "This option will modify application settings to be compatible with ngrok forwarding. "
+        "Expects a host name without protocol e.g `--ngrok=yourname.ngrok.app`. "
+        "You will also need to run ngrok."
+    ),
+)
+@click.option(
+    "--silo",
+    default=None,
+    type=click.Choice(["control", "region"]),
+    help="The silo mode to run this devserver instance in. Choices are control, region, none",
+)
+@click.option(
+    "--apigw/--no-apigw",
+    default=False,
+    required=False,
+    help="Use api-gateway service to proxy requests.",
+)
+@click.option(
+    "--workers/--no-workers",
+    default=False,
+    help="Run a taskworker instance with 1 child process.",
+)
+@click.option(
+    "--task-scheduler/--no-task-scheduler",
+    default=False,
+    help="Run task scheduler for periodically scheduled tasks.",
+)
+@click.argument(
+    "bind",
+    default=None,
+    metavar="ADDRESS",
+    envvar="SENTRY_DEVSERVER_BIND",
+    required=False,
+)
+@log_options()  # needs this decorator to be typed
+@settings_configuration  # needs this decorator to be typed
+@click.pass_context
+def devserver(
+    ctx: click.Context,
+    reload: bool,
+    watchers: bool,
+    ingest: bool,
+    occurrence_ingest: bool,
+    experimental_spa: bool,
+    prefix: bool,
+    pretty: bool,
+    environment: str,
+    debug_server: bool,
+    dev_consumer: bool,
+    bind: str | None,
+    client_hostname: str,
+    ngrok: str | None,
+    silo: str | None,
+    apigw: bool,
+    workers: bool,
+    task_scheduler: bool,
+) -> NoReturn:
+    "Starts a lightweight web server for development."
+    sentry_sdk.init(
+        dsn=os.environ.get("SENTRY_DEVSERVICES_DSN", ""),
+        traces_sample_rate=1.0,
+        trace_lifecycle="stream",
+    )
+    traces.new_trace()
+    with traces.start_span(
+        name="sentry.devserver", attributes={"sentry.op": "command"}, parent_span=None
+    ):
+        passed_options = {
+            p.name: ctx.params[p.name]
+            for p in ctx.command.params
+            if p.name is not None
+            and ctx.get_parameter_source(p.name) == click.core.ParameterSource.COMMANDLINE
+        }
+
+        for option_name, option_value in passed_options.items():
+            sentry_sdk.set_tag(f"devserver.{option_name}", option_value)
+            sentry_sdk.set_attribute(f"devserver.{option_name}", option_value)
+
+        if bind is None:
+            bind = "127.0.0.1:8000"
+
+        if ":" in bind:
+            host, port_s = bind.split(":", 1)
+            port = int(port_s)
+        else:
+            raise SystemExit(f"expected <host>:<port>, got {bind}")
+
+        # In a siloed environment we can't use localhost because cookies
+        # cannot be shared across subdomains of localhost
+        if silo and client_hostname == "localhost":
+            click.echo(
+                "WARNING: You had a client_hostname of `localhost` but are using silo modes. "
+                "Switching to dev.getsentry.net as the client hostname"
+            )
+            client_hostname = "dev.getsentry.net"
+        # We run webpack on the control server, not the regions.
+        if silo == "region" and watchers:
+            click.echo("WARNING: You have silo=region and webpack enabled. Disabling webpack.")
+            watchers = False
+
+        os.environ["SENTRY_ENVIRONMENT"] = environment
+        # NODE_ENV *must* use production for any prod-like environment as third party libraries look
+        # for this magic constant
+        os.environ["NODE_ENV"] = "production" if environment.startswith("prod") else environment
+
+        # Configure URL prefixes for customer-domains.
+        client_host = f"{client_hostname}:{port}"
+        os.environ["SENTRY_SYSTEM_URL_PREFIX"] = f"http://{client_host}"
+        os.environ["SENTRY_SYSTEM_BASE_HOSTNAME"] = client_host
+        os.environ["SENTRY_ORGANIZATION_BASE_HOSTNAME"] = f"{{slug}}.{client_host}"
+        os.environ["SENTRY_ORGANIZATION_URL_TEMPLATE"] = "http://{hostname}"
+        if ngrok:
+            os.environ["SENTRY_DEVSERVER_NGROK"] = ngrok
+
+        from django.conf import settings
+
+        from sentry.services.http import SentryHTTPServer
+
+        server_overrides: dict[str, int | bool | str | None] = {
+            # Make sure we reload really quickly for local dev in case it
+            # doesn't want to shut down nicely on it's own, NO MERCY
+            "workers-kill-timeout": 3,
+            "workers": 1 if debug_server else 2,
+        }
+
+        if reload:
+            server_overrides["reload"] = True
+            server_overrides["reload-ignore-worker-failure"] = True
+
+        daemons: MutableSequence[tuple[str, Sequence[str]]] = []
+        kafka_consumers: set[str] = set()
+        containers: set[str] = set()
+        with get_docker_client() as docker:
+            containers = {c.name for c in docker.containers.list(filters={"status": "running"})}
+
+        if experimental_spa:
+            os.environ["SENTRY_UI_DEV_ONLY"] = "1"
+            if not watchers:
+                click.secho(
+                    "Using experimental SPA mode without watchers enabled has no effect",
+                    err=True,
+                    fg="yellow",
+                )
+
+        # Configure ports based on options and environment vars
+        # If present, webpack is given the 'bind' address as it proxies
+        # requests to the server instances.
+        # When we're running multiple servers control + region servers are offset
+        # from webpack and each other.
+        ports = {
+            "webpack": port,
+            "server": port + 1,
+            "region.server": port + 10,
+        }
+        if not watchers:
+            ports["server"] = ports["webpack"]
+            ports.pop("webpack")
+
+        # Set ports to environment variables so that child processes can read them
+        os.environ["SENTRY_BACKEND_PORT"] = str(ports.get("server"))
+        if silo == "region":
+            os.environ["SENTRY_BACKEND_PORT"] = str(ports.get("region.server"))
+
+        server_port = os.environ["SENTRY_BACKEND_PORT"]
+
+        # We proxy all requests through webpacks devserver on the configured port.
+        # The backend is served on port+1 and is proxied via the webpack
+        # configuration.
+        if watchers:
+            daemons += settings.SENTRY_WATCHERS
+            os.environ["FORCE_WEBPACK_DEV_SERVER"] = "1"
+            os.environ["SENTRY_WEBPACK_PROXY_HOST"] = str(host)
+            os.environ["SENTRY_WEBPACK_PROXY_PORT"] = str(ports["webpack"])
+
+            # webpack and/or typescript is causing memory issues
+            os.environ["NODE_OPTIONS"] = (
+                os.environ.get("NODE_OPTIONS", "") + " --max-old-space-size=4096"
+            ).lstrip()
+
+        os.environ["SENTRY_USE_RELAY"] = "1" if settings.SENTRY_USE_RELAY else ""
+
+        if ingest and not workers:
+            if silo == "control":
+                # The control silo starts no ingest consumers, so --ingest only adds
+                # a taskworker. That worker fails region tasks with AvailabilityError.
+                click.echo("--ingest has no effect on the control silo, ignoring")
+            else:
+                click.echo("--ingest was provided, implicitly enabling --workers")
+                workers = True
+
+        if task_scheduler and silo != "control":
+            daemons.append(_get_daemon("taskworker-scheduler"))
+
+        if workers and silo != "control":
+            kafka_consumers.update(settings.DEVSERVER_START_KAFKA_CONSUMERS)
+
+            if settings.TASKWORKER_ALWAYS_EAGER:
+                raise click.ClickException(
+                    "Disable TASKWORKER_ALWAYS_EAGER in your settings file to spawn workers."
+                )
+
+            daemons.append(_get_taskworker_daemon(reload))
+
+            if settings.SENTRY_EVENTSTREAM in _POST_PROCESS_FORWARDER_EVENTSTREAMS:
+                kafka_consumers.add("post-process-forwarder-errors")
+                kafka_consumers.add("post-process-forwarder-transactions")
+                kafka_consumers.add("post-process-forwarder-issue-platform")
+
+            daemons.extend([_get_daemon(name) for name in settings.SENTRY_EXTRA_WORKERS])
+
+            if settings.SENTRY_USE_METRICS_DEV and settings.SENTRY_USE_RELAY:
+                kafka_consumers.add("ingest-metrics")
+
+            if settings.SENTRY_USE_UPTIME:
+                kafka_consumers.add("uptime-results")
+
+            if settings.SENTRY_USE_RELAY:
+                kafka_consumers.add("ingest-events")
+                kafka_consumers.add("ingest-attachments")
+                kafka_consumers.add("ingest-transactions")
+                kafka_consumers.add("ingest-monitors")
+                kafka_consumers.add("ingest-feedback-events")
+
+                kafka_consumers.add("monitors-clock-tick")
+                kafka_consumers.add("monitors-clock-tasks")
+                kafka_consumers.add("monitors-incident-occurrences")
+
+                # ingest-profiles is now handled by taskbroker passthrough mode
+                # via devservices (STREAM-1041)
+
+                if settings.SENTRY_USE_SPANS_BUFFER:
+                    kafka_consumers.add("process-spans")
+                    kafka_consumers.add("ingest-occurrences")
+
+            if occurrence_ingest:
+                kafka_consumers.add("ingest-occurrences")
+
+        kafka_container_name = "kafka-kafka-1"
+        kafka_is_running = kafka_container_name in containers
+
+        # Set up Kafka consumers if they are configured
+        consumer_daemons: list[tuple[str, Sequence[str]]] = []
+        if kafka_consumers:
+            kafka_container_warning_message = f"""
+    Devserver is configured to work with devservices. Looks like the `{kafka_container_name}` container is not running.
+    Please run `devservices up` to start it."""
+            if not kafka_is_running:
+                raise click.ClickException(
+                    f"""
+    Devserver is configured to start some kafka consumers, but Kafka
+    doesn't seem to be running.
+
+    The following consumers were intended to be started: {kafka_consumers}
+
+    Make sure you have:
+
+        SENTRY_USE_RELAY = True
+
+    or:
+
+        SENTRY_EVENTSTREAM = "sentry.eventstream.kafka.KafkaEventStream"
+
+    {kafka_container_warning_message}
+
+    Alternatively, run without --workers.
+            """
+                )
+
+            if dev_consumer:
+                consumer_daemons.append(
+                    (
+                        "dev-consumer",
+                        ["sentry", "run", "dev-consumer"] + list(kafka_consumers),
+                    )
+                )
+            else:
+                for name in kafka_consumers:
+                    consumer_daemons.append(
+                        (
+                            name,
+                            [
+                                "sentry",
+                                "run",
+                                "consumer",
+                                name,
+                                "--consumer-group=sentry-consumer",
+                                "--auto-offset-reset=latest",
+                                "--no-strict-offset-reset",
+                            ],
+                        )
+                    )
+
+        # A better log-format for local dev when running through honcho,
+        # but if there aren't any other daemons, we don't want to override.
+        if daemons or consumer_daemons:
+            server_overrides["log-format"] = "%(method)s %(status)d %(path)s %(proto)s"
+        else:
+            server_overrides["log-format"] = "[%(time)s] %(method)s %(status)d %(path)s %(proto)s"
+
+        server_port = os.environ["SENTRY_BACKEND_PORT"]
+
+        if silo == "region":
+            os.environ["SENTRY_SILO_DEVSERVER"] = "1"
+            os.environ["SENTRY_SILO_MODE"] = "REGION"
+            os.environ["SENTRY_REGION"] = "us"
+            os.environ["SENTRY_REGION_SILO_PORT"] = str(server_port)
+            os.environ["SENTRY_CONTROL_SILO_PORT"] = str(ports["server"] + 1)
+            os.environ["SENTRY_DEVSERVER_BIND"] = f"127.0.0.1:{server_port}"
+            os.environ["SENTRY_GRANIAN_WORKERS"] = "2"
+            server_port = str(ports["region.server"])
+
+        cwd = os.path.realpath(os.path.join(settings.PROJECT_ROOT, os.pardir, os.pardir))
+        topics_ready = Path(cwd, ".artifacts", "devserver-kafka-topics-ready")
+        topics_ready.parent.mkdir(parents=True, exist_ok=True)
+        topics_ready.unlink(missing_ok=True)
+
+        serve_in_process = not daemons and not consumer_daemons and not silo
+        if serve_in_process and kafka_is_running:
+            # A process, not a thread: Granian forks its workers, and a fork
+            # must not copy live Kafka client threads.
+            multiprocessing.get_context("fork").Process(
+                target=_create_kafka_topics_or_stop,
+                args=(topics_ready, sys.stderr, os.getpid()),
+                daemon=True,
+            ).start()
+
+        if debug_server or serve_in_process:
+            from sentry.runner import configure
+
+            # The web server runs in this process, so it needs the whole app.
+            configure()
+
+        server = SentryHTTPServer(
+            host=host,
+            port=int(server_port),
+            extra_options=server_overrides,
+            debug=debug_server,
+        )
+
+        # If we don't need any other daemons, just launch a normal webserver
+        # and avoid dealing with subprocesses
+        if serve_in_process:
+            server.run()
+            sys.exit()
+
+        from subprocess import list2cmdline
+
+        from honcho.manager import Manager
+
+        os.environ["PYTHONUNBUFFERED"] = "true"
+
+        if debug_server:
+            threading.Thread(target=server.run).start()
+        else:
+            # Make sure that the environment is prepared before honcho takes over
+            # This sets all the appropriate env vars, etc
+            skip_validation = "SENTRY_SKIP_BACKEND_VALIDATION" in os.environ
+            server.prepare_environment()
+            if not skip_validation:
+                # This process only loaded settings, so the children validate the backends.
+                del os.environ["SENTRY_SKIP_BACKEND_VALIDATION"]
+            os.environ["SENTRY_GRANIAN_PORT"] = str(server_port)
+            if reload:
+                os.environ["SENTRY_GRANIAN_RELOAD"] = "1"
+
+            if silo != "control":
+                daemons += [_get_daemon("server")]
+
+        from sentry.runner.formatting import TeeStream, get_honcho_printer
+
+        log_path = Path(
+            os.environ.get("SENTRY_DEV_LOG_FILE", os.path.join(cwd, ".artifacts", "dev.log"))
+        )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_path, "w", encoding="utf-8")
+
+        output = TeeStream(sys.stdout, log_file)
+        honcho_printer = get_honcho_printer(prefix=prefix, pretty=pretty, output=output)
+
+        manager = Manager(honcho_printer)
+        commands = [(name, list2cmdline(cmd)) for name, cmd in daemons] + [
+            (name, _after_kafka_topics(topics_ready, list2cmdline(cmd)))
+            for name, cmd in consumer_daemons
+        ]
+        for name, command in commands:
+            quiet = bool(
+                name not in (settings.DEVSERVER_LOGS_ALLOWLIST or ())
+                and settings.DEVSERVER_LOGS_ALLOWLIST
+            )
+            manager.add_process(name, command, quiet=quiet, cwd=cwd)
+
+        if silo == "control":
+            control_environ = {
+                "SENTRY_SILO_DEVSERVER": "1",
+                "SENTRY_SILO_MODE": "CONTROL",
+                "SENTRY_REGION": "",
+                "SENTRY_CONTROL_SILO_PORT": server_port,
+                "SENTRY_REGION_SILO_PORT": str(ports["region.server"]),
+                "SENTRY_DEVSERVER_BIND": f"127.0.0.1:{server_port}",
+                "SENTRY_GRANIAN_PORT": str(ports["server"]),
+                "SENTRY_GRANIAN_WORKERS": "2",
+            }
+            if apigw:
+                control_environ["SENTRY_CONTROL_SILO_PORT"] = str(int(server_port) + 1)
+                control_environ["SENTRY_DEVSERVER_BIND"] = f"127.0.0.1:{int(server_port) + 1}"
+                control_environ["SENTRY_GRANIAN_PORT"] = str(ports["server"] + 1)
+
+            merged_env = os.environ.copy()
+            merged_env.update(control_environ)
+            control_services = ["server"]
+            if workers:
+                control_services.append("taskworker")
+            if task_scheduler:
+                control_services.append("taskworker-scheduler")
+
+            for service in control_services:
+                if service == "taskworker":
+                    name, cmd = _get_taskworker_daemon(reload)
+                else:
+                    name, cmd = _get_daemon(service)
+                name = f"control.{name}"
+                quiet = bool(
+                    name not in (settings.DEVSERVER_LOGS_ALLOWLIST or ())
+                    and settings.DEVSERVER_LOGS_ALLOWLIST
+                )
+                manager.add_process(name, list2cmdline(cmd), quiet=quiet, cwd=cwd, env=merged_env)
+
+        if kafka_is_running:
+            threading.Thread(
+                target=_create_kafka_topics_or_stop,
+                args=(topics_ready, output, os.getpid()),
+                daemon=True,
+            ).start()
+        manager.loop()
+        sys.exit(manager.returncode)

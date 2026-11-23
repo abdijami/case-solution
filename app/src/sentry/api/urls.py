@@ -1,0 +1,4103 @@
+from __future__ import annotations
+
+from django.conf.urls import include
+from django.urls import URLPattern, URLResolver, re_path
+
+from sentry.agent_handoff.endpoints.claim_agent_handoff import ClaimAgentHandoffEndpoint
+from sentry.agent_handoff.endpoints.organization_agent_handoff import (
+    OrganizationAgentHandoffEndpoint,
+)
+from sentry.ai_monitoring.endpoints.organization_ai_conversation_details import (
+    OrganizationAIConversationDetailsEndpoint,
+)
+from sentry.ai_monitoring.endpoints.organization_ai_conversations import (
+    OrganizationAIConversationsEndpoint,
+)
+from sentry.ai_monitoring.endpoints.project_code_explanation import ProjectCodeExplanationEndpoint
+from sentry.api.endpoints.dsn_lookup import DsnLookupEndpoint
+from sentry.api.endpoints.oauth_authorize import OAuthAuthorizeEndpoint
+from sentry.api.endpoints.oauth_authorize_context import OAuthAuthorizeContextEndpoint
+from sentry.api.endpoints.oauth_device import OAuthDeviceEndpoint
+from sentry.api.endpoints.oauth_device_context import OAuthDeviceContextEndpoint
+from sentry.api.endpoints.organization_auth_token_details import (
+    OrganizationAuthTokenDetailsEndpoint,
+)
+from sentry.api.endpoints.organization_auth_tokens import OrganizationAuthTokensEndpoint
+from sentry.api.endpoints.organization_explore_formulas import (
+    OrganizationExploreFormulas,
+    OrganizationExploreFormulasDetail,
+)
+from sentry.api.endpoints.organization_fork import OrganizationForkEndpoint
+from sentry.api.endpoints.organization_insights_tree import OrganizationInsightsTreeEndpoint
+from sentry.api.endpoints.organization_intercom_jwt import OrganizationIntercomJwtEndpoint
+from sentry.api.endpoints.organization_missing_org_members import OrganizationMissingMembersEndpoint
+from sentry.api.endpoints.organization_monitoring_provider_details import (
+    OrganizationMonitoringProviderDetailsEndpoint,
+)
+from sentry.api.endpoints.organization_monitoring_provider_index import (
+    OrganizationMonitoringProviderIndexEndpoint,
+)
+from sentry.api.endpoints.organization_monitoring_provider_verify_connection import (
+    OrganizationMonitoringProviderVerifyConnectionEndpoint,
+)
+from sentry.api.endpoints.organization_pipeline import OrganizationPipelineEndpoint
+from sentry.api.endpoints.organization_project_keys import OrganizationProjectKeysEndpoint
+from sentry.api.endpoints.organization_releases import (
+    OrganizationReleasesEndpoint,
+    OrganizationReleasesStatsEndpoint,
+)
+from sentry.api.endpoints.organization_sampling_effective_sample_rate import (
+    OrganizationSamplingEffectiveSampleRateEndpoint,
+)
+from sentry.api.endpoints.organization_stats_summary import OrganizationStatsSummaryEndpoint
+from sentry.api.endpoints.organization_trace_item_attribute_context import (
+    OrganizationTraceItemAttributeContextEndpoint,
+)
+from sentry.api.endpoints.organization_trace_item_attribute_details import (
+    OrganizationTraceItemAttributeDetailsEndpoint,
+)
+from sentry.api.endpoints.organization_trace_item_attributes import (
+    OrganizationTraceItemAttributesEndpoint,
+    OrganizationTraceItemAttributeValidateEndpoint,
+    OrganizationTraceItemAttributeValuesEndpoint,
+)
+from sentry.api.endpoints.organization_trace_item_attributes_merged import (
+    OrganizationTraceItemAttributesMergedEndpoint,
+)
+from sentry.api.endpoints.organization_trace_item_attributes_ranked import (
+    OrganizationTraceItemsAttributesRankedEndpoint,
+)
+from sentry.api.endpoints.organization_trace_item_metric_context import (
+    OrganizationTraceItemMetricContextEndpoint,
+)
+from sentry.api.endpoints.organization_trace_item_metrics import (
+    OrganizationTraceItemMetricsEndpoint,
+)
+from sentry.api.endpoints.organization_trace_item_stats import OrganizationTraceItemStatsEndpoint
+from sentry.api.endpoints.organization_unsubscribe import (
+    OrganizationUnsubscribeIssue,
+    OrganizationUnsubscribeProject,
+)
+from sentry.api.endpoints.project_overview import ProjectOverviewEndpoint
+from sentry.api.endpoints.project_statistical_detectors import ProjectStatisticalDetectors
+from sentry.api.endpoints.release_thresholds.release_threshold import ReleaseThresholdEndpoint
+from sentry.api.endpoints.release_thresholds.release_threshold_details import (
+    ReleaseThresholdDetailsEndpoint,
+)
+from sentry.api.endpoints.release_thresholds.release_threshold_index import (
+    ReleaseThresholdIndexEndpoint,
+)
+from sentry.api.endpoints.release_thresholds.release_threshold_status_index import (
+    ReleaseThresholdStatusIndexEndpoint,
+)
+from sentry.api.endpoints.secret_scanning.github import SecretScanningGitHubEndpoint
+from sentry.api.endpoints.source_map_debug import SourceMapDebugEndpoint
+from sentry.auth_v2.urls import AUTH_V2_URLS
+from sentry.conduit.endpoints.organization_conduit_demo import OrganizationConduitDemoEndpoint
+from sentry.core.endpoints.organization_auditlogs import OrganizationAuditLogsEndpoint
+from sentry.core.endpoints.organization_avatar import OrganizationAvatarEndpoint
+from sentry.core.endpoints.organization_details import OrganizationDetailsEndpoint
+from sentry.core.endpoints.organization_environments import OrganizationEnvironmentsEndpoint
+from sentry.core.endpoints.organization_index import OrganizationIndexEndpoint
+from sentry.core.endpoints.organization_member_details import OrganizationMemberDetailsEndpoint
+from sentry.core.endpoints.organization_member_index import OrganizationMemberIndexEndpoint
+from sentry.core.endpoints.organization_member_requests_invite_details import (
+    OrganizationInviteRequestDetailsEndpoint,
+)
+from sentry.core.endpoints.organization_member_requests_invite_index import (
+    OrganizationInviteRequestIndexEndpoint,
+)
+from sentry.core.endpoints.organization_member_requests_join import OrganizationJoinRequestEndpoint
+from sentry.core.endpoints.organization_member_team_details import (
+    OrganizationMemberTeamDetailsEndpoint,
+)
+from sentry.core.endpoints.organization_projects import (
+    OrganizationProjectsCountEndpoint,
+    OrganizationProjectsEndpoint,
+)
+from sentry.core.endpoints.organization_request_project_creation import (
+    OrganizationRequestProjectCreation,
+)
+from sentry.core.endpoints.organization_teams import OrganizationTeamsEndpoint
+from sentry.core.endpoints.organization_user_details import OrganizationUserDetailsEndpoint
+from sentry.core.endpoints.organization_user_teams import OrganizationUserTeamsEndpoint
+from sentry.core.endpoints.organization_users import OrganizationUsersEndpoint
+from sentry.core.endpoints.project_details import ProjectDetailsEndpoint
+from sentry.core.endpoints.project_environment_details import ProjectEnvironmentDetailsEndpoint
+from sentry.core.endpoints.project_environments import ProjectEnvironmentsEndpoint
+from sentry.core.endpoints.project_index import ProjectIndexEndpoint
+from sentry.core.endpoints.project_key_details import ProjectKeyDetailsEndpoint
+from sentry.core.endpoints.project_key_stats import ProjectKeyStatsEndpoint
+from sentry.core.endpoints.project_keys import ProjectKeysEndpoint
+from sentry.core.endpoints.project_stats import ProjectStatsEndpoint
+from sentry.core.endpoints.project_team_details import ProjectTeamDetailsEndpoint
+from sentry.core.endpoints.project_teams import ProjectTeamsEndpoint
+from sentry.core.endpoints.project_transfer import ProjectTransferEndpoint
+from sentry.core.endpoints.project_users import ProjectUsersEndpoint
+from sentry.core.endpoints.scim.members import (
+    OrganizationSCIMMemberDetails,
+    OrganizationSCIMMemberIndex,
+)
+from sentry.core.endpoints.scim.resource_types import (
+    OrganizationSCIMResourceTypeDetails,
+    OrganizationSCIMResourceTypeIndex,
+)
+from sentry.core.endpoints.scim.schemas import (
+    OrganizationSCIMSchemaDetails,
+    OrganizationSCIMSchemaIndex,
+)
+from sentry.core.endpoints.scim.service_provider_config import (
+    OrganizationSCIMServiceProviderConfig,
+)
+from sentry.core.endpoints.scim.teams import OrganizationSCIMTeamDetails, OrganizationSCIMTeamIndex
+from sentry.core.endpoints.team_avatar import TeamAvatarEndpoint
+from sentry.core.endpoints.team_details import TeamDetailsEndpoint
+from sentry.core.endpoints.team_members import TeamMembersEndpoint
+from sentry.core.endpoints.team_projects import TeamProjectsEndpoint
+from sentry.core.endpoints.team_release_count import TeamReleaseCountEndpoint
+from sentry.core.endpoints.team_stats import TeamStatsEndpoint
+from sentry.core.endpoints.team_time_to_resolution import TeamTimeToResolutionEndpoint
+from sentry.core.endpoints.team_unresolved_issue_age import TeamUnresolvedIssueAgeEndpoint
+from sentry.dashboards.endpoints.organization_dashboard_details import (
+    OrganizationDashboardDetailsEndpoint,
+    OrganizationDashboardFavoriteEndpoint,
+    OrganizationDashboardVisitEndpoint,
+)
+from sentry.dashboards.endpoints.organization_dashboard_generate import (
+    OrganizationDashboardGenerateEndpoint,
+)
+from sentry.dashboards.endpoints.organization_dashboard_revision_details import (
+    OrganizationDashboardRevisionDetailsEndpoint,
+)
+from sentry.dashboards.endpoints.organization_dashboard_revision_restore import (
+    OrganizationDashboardRevisionRestoreEndpoint,
+)
+from sentry.dashboards.endpoints.organization_dashboard_revisions import (
+    OrganizationDashboardRevisionsEndpoint,
+)
+from sentry.dashboards.endpoints.organization_dashboard_widget_details import (
+    OrganizationDashboardWidgetDetailsEndpoint,
+)
+from sentry.dashboards.endpoints.organization_dashboards import OrganizationDashboardsEndpoint
+from sentry.dashboards.endpoints.organization_dashboards_starred import (
+    OrganizationDashboardsStarredEndpoint,
+    OrganizationDashboardsStarredOrderEndpoint,
+)
+from sentry.data_export.endpoints.data_export import DataExportEndpoint
+from sentry.data_export.endpoints.data_export_details import DataExportDetailsEndpoint
+from sentry.data_secrecy.api.waive_data_secrecy import WaiveDataSecrecyEndpoint
+from sentry.discover.endpoints.discover_homepage_query import DiscoverHomepageQueryEndpoint
+from sentry.discover.endpoints.discover_key_transactions import (
+    KeyTransactionEndpoint,
+    KeyTransactionListEndpoint,
+)
+from sentry.discover.endpoints.discover_saved_queries import DiscoverSavedQueriesEndpoint
+from sentry.discover.endpoints.discover_saved_query_detail import (
+    DiscoverSavedQueryDetailEndpoint,
+    DiscoverSavedQueryVisitEndpoint,
+)
+from sentry.discover.endpoints.discover_saved_query_starred import DiscoverSavedQueryStarredEndpoint
+from sentry.explore.endpoints.explore_saved_queries import ExploreSavedQueriesEndpoint
+from sentry.explore.endpoints.explore_saved_query_detail import (
+    ExploreSavedQueryDetailEndpoint,
+    ExploreSavedQueryVisitEndpoint,
+)
+from sentry.explore.endpoints.explore_saved_query_starred import ExploreSavedQueryStarredEndpoint
+from sentry.explore.endpoints.saved_queries import SavedQueriesEndpoint
+from sentry.explore.endpoints.saved_query_starred_order import SavedQueryStarredOrderEndpoint
+from sentry.feedback.endpoints.organization_feedback_categories import (
+    OrganizationFeedbackCategoriesEndpoint,
+)
+from sentry.feedback.endpoints.organization_feedback_summary import (
+    OrganizationFeedbackSummaryEndpoint,
+)
+from sentry.feedback.endpoints.organization_user_reports import OrganizationUserReportsEndpoint
+from sentry.feedback.endpoints.project_user_reports import ProjectUserReportsEndpoint
+from sentry.flags.endpoints.hooks import OrganizationFlagsHooksEndpoint
+from sentry.flags.endpoints.logs import (
+    OrganizationFlagLogDetailsEndpoint,
+    OrganizationFlagLogIndexEndpoint,
+)
+from sentry.flags.endpoints.secrets import (
+    OrganizationFlagsWebHookSigningSecretEndpoint,
+    OrganizationFlagsWebHookSigningSecretsEndpoint,
+)
+from sentry.inbox.endpoints.organization_inbox import OrganizationInboxIndexEndpoint
+from sentry.inbox.endpoints.organization_inbox_count import (
+    OrganizationInboxCountEndpoint,
+)
+from sentry.inbox.endpoints.organization_inbox_item_events import (
+    OrganizationInboxItemEventsEndpoint,
+)
+from sentry.insights.endpoints.starred_segments import OrganizationStarredServiceSpansEndpoint
+from sentry.integrations.api.endpoints.data_forwarding_details import DataForwardingDetailsEndpoint
+from sentry.integrations.api.endpoints.data_forwarding_index import DataForwardingIndexEndpoint
+from sentry.integrations.api.endpoints.doc_integration_avatar import DocIntegrationAvatarEndpoint
+from sentry.integrations.api.endpoints.doc_integration_details import DocIntegrationDetailsEndpoint
+from sentry.integrations.api.endpoints.doc_integrations_index import DocIntegrationsEndpoint
+from sentry.integrations.api.endpoints.external_team_details import ExternalTeamDetailsEndpoint
+from sentry.integrations.api.endpoints.external_team_index import ExternalTeamEndpoint
+from sentry.integrations.api.endpoints.external_user_details import ExternalUserDetailsEndpoint
+from sentry.integrations.api.endpoints.external_user_index import ExternalUserEndpoint
+from sentry.integrations.api.endpoints.integration_features import IntegrationFeaturesEndpoint
+from sentry.integrations.api.endpoints.integration_proxy import InternalIntegrationProxyEndpoint
+from sentry.integrations.api.endpoints.organization_code_mapping_codeowners import (
+    OrganizationCodeMappingCodeOwnersEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_code_mapping_details import (
+    OrganizationCodeMappingDetailsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_code_mappings import (
+    OrganizationCodeMappingsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_code_mappings_bulk import (
+    OrganizationCodeMappingsBulkEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_coding_agents import (
+    OrganizationCodingAgentsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_config_integrations import (
+    OrganizationConfigIntegrationsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_channel_validate import (
+    OrganizationIntegrationChannelValidateEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_channels import (
+    OrganizationIntegrationChannelsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_details import (
+    OrganizationIntegrationDetailsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_direct_enable import (
+    OrganizationIntegrationDirectEnableEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_issues import (
+    OrganizationIntegrationIssuesEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_repo_sync import (
+    OrganizationIntegrationRepoSyncEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_repos import (
+    OrganizationIntegrationReposEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_request import (
+    OrganizationIntegrationRequestEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integration_serverless_functions import (
+    OrganizationIntegrationServerlessFunctionsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_integrations_index import (
+    OrganizationIntegrationsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_pull_request_files import (
+    OrganizationPullRequestFilesEndpoint,
+    OrganizationRepositoryPullRequestFilesEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_repositories import (
+    OrganizationRepositoriesEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_repository_commits import (
+    OrganizationRepositoryCommitsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_repository_details import (
+    OrganizationRepositoryDetailsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_repository_platforms import (
+    OrganizationRepositoryPlatformsEndpoint,
+)
+from sentry.integrations.api.endpoints.organization_repository_settings import (
+    OrganizationRepositorySettingsEndpoint,
+)
+from sentry.investigations.endpoints.organization_investigation_candidates import (
+    OrganizationInvestigationCandidatesEndpoint,
+)
+from sentry.investigations.endpoints.organization_investigation_orchestration import (
+    OrganizationInvestigationOrchestrationCommandsEndpoint,
+    OrganizationInvestigationOrchestrationEndpoint,
+)
+from sentry.investigations.endpoints.organization_investigation_start import (
+    OrganizationInvestigationStartEndpoint,
+)
+from sentry.issues.endpoints import (
+    ActionableItemsEndpoint,
+    EventIdLookupEndpoint,
+    EventJsonEndpoint,
+    GroupActivitiesEndpoint,
+    GroupDetailsEndpoint,
+    GroupEventDetailsEndpoint,
+    GroupEventsEndpoint,
+    GroupHashesEndpoint,
+    GroupImpactAssessmentEndpoint,
+    GroupNotesDetailsEndpoint,
+    GroupNotesEndpoint,
+    GroupPullRequestsEndpoint,
+    GroupRelatedEndpoint,
+    GroupSimilarIssuesEndpoint,
+    GroupTombstoneDetailsEndpoint,
+    GroupTombstoneEndpoint,
+    OrganizationCodeMappingRepoPrefixesEndpoint,
+    OrganizationDeriveCodeMappingsEndpoint,
+    OrganizationGroupIndexEndpoint,
+    OrganizationGroupIndexStatsEndpoint,
+    OrganizationGroupSearchViewDetailsEndpoint,
+    OrganizationGroupSearchViewDetailsStarredEndpoint,
+    OrganizationGroupSearchViewsEndpoint,
+    OrganizationGroupSearchViewsStarredEndpoint,
+    OrganizationGroupSearchViewVisitEndpoint,
+    OrganizationIssuesCountEndpoint,
+    OrganizationIssuesWithSupergroupsEndpoint,
+    OrganizationReleasePreviousCommitsEndpoint,
+    ProjectCodeMappingStackPrefixesEndpoint,
+    ProjectEventDetailsEndpoint,
+    ProjectEventsEndpoint,
+    ProjectGroupIndexEndpoint,
+    ProjectGroupStatsEndpoint,
+    ProjectStacktraceLinkEndpoint,
+    ProjectStacktraceSourceContextEndpoint,
+    RelatedIssuesEndpoint,
+    SharedGroupDetailsEndpoint,
+    ShortIdLookupEndpoint,
+    TeamGroupsOldEndpoint,
+)
+from sentry.issues.endpoints.debug_group_derived_data import DebugGroupDerivedDataEndpoint
+from sentry.issues.endpoints.event_grouping_info import EventGroupingInfoEndpoint
+from sentry.issues.endpoints.event_owners import EventOwnersEndpoint
+from sentry.issues.endpoints.event_reprocessable import EventReprocessableEndpoint
+from sentry.issues.endpoints.group_attachments import GroupAttachmentsEndpoint
+from sentry.issues.endpoints.group_current_release import GroupCurrentReleaseEndpoint
+from sentry.issues.endpoints.group_first_last_release import GroupFirstLastReleaseEndpoint
+from sentry.issues.endpoints.group_integration_details import GroupIntegrationDetailsEndpoint
+from sentry.issues.endpoints.group_integrations import GroupIntegrationsEndpoint
+from sentry.issues.endpoints.group_reprocessing import GroupReprocessingEndpoint
+from sentry.issues.endpoints.group_stats import GroupStatsEndpoint
+from sentry.issues.endpoints.group_tagkey_details import GroupTagKeyDetailsEndpoint
+from sentry.issues.endpoints.group_tagkey_values import GroupTagKeyValuesEndpoint
+from sentry.issues.endpoints.group_tags import GroupTagsEndpoint
+from sentry.issues.endpoints.group_user_reports import GroupUserReportsEndpoint
+from sentry.issues.endpoints.organization_codeowners_associations import (
+    OrganizationCodeOwnersAssociationsEndpoint,
+)
+from sentry.issues.endpoints.organization_event_details import OrganizationEventDetailsEndpoint
+from sentry.issues.endpoints.organization_group_search_view_starred_order import (
+    OrganizationGroupSearchViewStarredOrderEndpoint,
+)
+from sentry.issues.endpoints.organization_issue_metrics import OrganizationIssueMetricsEndpoint
+from sentry.issues.endpoints.organization_issue_timeseries import (
+    OrganizationIssueTimeSeriesEndpoint,
+)
+from sentry.issues.endpoints.organization_issues_resolved_in_release import (
+    OrganizationIssuesResolvedInReleaseEndpoint,
+)
+from sentry.issues.endpoints.project_codeowners_details import ProjectCodeOwnersDetailsEndpoint
+from sentry.issues.endpoints.project_codeowners_index import ProjectCodeOwnersEndpoint
+from sentry.issues.endpoints.project_issues_resolved_in_release import (
+    ProjectIssuesResolvedInReleaseEndpoint,
+)
+from sentry.issues.endpoints.project_ownership import ProjectOwnershipEndpoint
+from sentry.issues.endpoints.project_performance_issue_settings import (
+    ProjectPerformanceIssueSettingsEndpoint,
+)
+from sentry.issues.endpoints.project_user_issue import ProjectUserIssueEndpoint
+from sentry.issues.endpoints.team_all_unresolved_issues import TeamAllUnresolvedIssuesEndpoint
+from sentry.issues.endpoints.team_issue_breakdown import TeamIssueBreakdownEndpoint
+from sentry.monitors.endpoints.organization_monitor_checkin_index import (
+    OrganizationMonitorCheckInIndexEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_details import (
+    OrganizationMonitorDetailsEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_environment_details import (
+    OrganizationMonitorEnvironmentDetailsEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_index import OrganizationMonitorIndexEndpoint
+from sentry.monitors.endpoints.organization_monitor_index_count import (
+    OrganizationMonitorIndexCountEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_index_stats import (
+    OrganizationMonitorIndexStatsEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_processing_errors_index import (
+    OrganizationMonitorProcessingErrorsIndexEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_schedule_sample_buckets import (
+    OrganizationMonitorScheduleSampleBucketsEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_schedule_sample_data import (
+    OrganizationMonitorScheduleSampleDataEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_schedule_sample_window import (
+    OrganizationMonitorScheduleSampleWindowEndpoint,
+)
+from sentry.monitors.endpoints.organization_monitor_stats import OrganizationMonitorStatsEndpoint
+from sentry.monitors.endpoints.project_monitor_checkin_index import (
+    ProjectMonitorCheckInIndexEndpoint,
+)
+from sentry.monitors.endpoints.project_monitor_details import ProjectMonitorDetailsEndpoint
+from sentry.monitors.endpoints.project_monitor_environment_details import (
+    ProjectMonitorEnvironmentDetailsEndpoint,
+)
+from sentry.monitors.endpoints.project_monitor_processing_errors_index import (
+    ProjectMonitorProcessingErrorsIndexEndpoint,
+)
+from sentry.monitors.endpoints.project_monitor_stats import ProjectMonitorStatsEndpoint
+from sentry.monitors.endpoints.project_processing_errors_details import (
+    ProjectProcessingErrorsDetailsEndpoint,
+)
+from sentry.monitors.endpoints.project_processing_errors_index import (
+    ProjectProcessingErrorsIndexEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_action_request_apply import (
+    OrganizationNotebookActionRequestApplyEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_action_request_recheck import (
+    OrganizationNotebookActionRequestRecheckEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_action_request_retry_follow_up import (
+    OrganizationNotebookActionRequestRetryFollowUpEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_block_details import (
+    OrganizationNotebookBlockDetailsEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_block_execution_details import (
+    OrganizationNotebookBlockExecutionDetailsEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_block_execution_index import (
+    OrganizationNotebookBlockExecutionIndexEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_block_index import (
+    OrganizationNotebookBlockIndexEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_block_order import (
+    OrganizationNotebookBlockOrderEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_comment_counts import (
+    OrganizationNotebookCommentCountsEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_comment_details import (
+    OrganizationNotebookCommentDetailsEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_comment_index import (
+    OrganizationNotebookCommentIndexEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_details import (
+    OrganizationNotebookDetailsEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_duplicate import (
+    OrganizationNotebookDuplicateEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_favorite import (
+    OrganizationNotebookFavoriteEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_index import (
+    OrganizationNotebookIndexEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_presence import (
+    OrganizationNotebookPresenceEndpoint,
+)
+from sentry.notebooks.endpoints.organization_notebook_title_generation import (
+    OrganizationNotebookTitleGenerationEndpoint,
+)
+from sentry.notifications.api.endpoints.notification_actions_available import (
+    NotificationActionsAvailableEndpoint,
+)
+from sentry.notifications.api.endpoints.notification_actions_details import (
+    NotificationActionsDetailsEndpoint,
+)
+from sentry.notifications.api.endpoints.notification_actions_index import (
+    NotificationActionsIndexEndpoint,
+)
+from sentry.notifications.api.endpoints.notification_defaults import NotificationDefaultsEndpoints
+from sentry.notifications.api.endpoints.user_notification_details import (
+    UserNotificationDetailsEndpoint,
+)
+from sentry.notifications.api.endpoints.user_notification_email import UserNotificationEmailEndpoint
+from sentry.notifications.api.endpoints.user_notification_settings_options import (
+    UserNotificationSettingsOptionsEndpoint,
+)
+from sentry.notifications.api.endpoints.user_notification_settings_options_detail import (
+    UserNotificationSettingsOptionsDetailEndpoint,
+)
+from sentry.notifications.api.endpoints.user_notification_settings_providers import (
+    UserNotificationSettingsProvidersEndpoint,
+)
+from sentry.notifications.platform.api.endpoints import urls as notification_platform_urls
+from sentry.objectstore.endpoints.organization import ObjectstoreEndpoint
+from sentry.preprod.api.endpoints import urls as preprod_urls
+from sentry.releases.endpoints.organization_release_assemble import (
+    OrganizationReleaseAssembleEndpoint,
+)
+from sentry.releases.endpoints.organization_release_commits import (
+    OrganizationReleaseCommitsEndpoint,
+)
+from sentry.releases.endpoints.organization_release_details import (
+    OrganizationReleaseDetailsEndpoint,
+)
+from sentry.releases.endpoints.organization_release_file_details import (
+    OrganizationReleaseFileDetailsEndpoint,
+)
+from sentry.releases.endpoints.organization_release_files import OrganizationReleaseFilesEndpoint
+from sentry.releases.endpoints.organization_release_health_data import (
+    OrganizationReleaseHealthDataEndpoint,
+)
+from sentry.releases.endpoints.organization_release_meta import OrganizationReleaseMetaEndpoint
+from sentry.releases.endpoints.project_release_commits import ProjectReleaseCommitsEndpoint
+from sentry.releases.endpoints.project_release_details import ProjectReleaseDetailsEndpoint
+from sentry.releases.endpoints.project_release_file_details import ProjectReleaseFileDetailsEndpoint
+from sentry.releases.endpoints.project_release_files import ProjectReleaseFilesEndpoint
+from sentry.releases.endpoints.project_release_repositories import ProjectReleaseRepositories
+from sentry.releases.endpoints.project_release_setup import ProjectReleaseSetupCompletionEndpoint
+from sentry.releases.endpoints.project_release_stats import ProjectReleaseStatsEndpoint
+from sentry.releases.endpoints.project_releases import ProjectReleasesEndpoint
+from sentry.releases.endpoints.project_releases_token import ProjectReleasesTokenEndpoint
+from sentry.releases.endpoints.release_deploys import ReleaseDeploysEndpoint
+from sentry.relocation.api.endpoints.abort import RelocationAbortEndpoint
+from sentry.relocation.api.endpoints.artifacts.details import RelocationArtifactDetailsEndpoint
+from sentry.relocation.api.endpoints.artifacts.index import RelocationArtifactIndexEndpoint
+from sentry.relocation.api.endpoints.cancel import RelocationCancelEndpoint
+from sentry.relocation.api.endpoints.details import RelocationDetailsEndpoint
+from sentry.relocation.api.endpoints.index import RelocationIndexEndpoint
+from sentry.relocation.api.endpoints.pause import RelocationPauseEndpoint
+from sentry.relocation.api.endpoints.public_key import RelocationPublicKeyEndpoint
+from sentry.relocation.api.endpoints.recover import RelocationRecoverEndpoint
+from sentry.relocation.api.endpoints.retry import RelocationRetryEndpoint
+from sentry.relocation.api.endpoints.unpause import RelocationUnpauseEndpoint
+from sentry.replays.endpoints.organization_replay_count import OrganizationReplayCountEndpoint
+from sentry.replays.endpoints.organization_replay_details import OrganizationReplayDetailsEndpoint
+from sentry.replays.endpoints.organization_replay_events_meta import (
+    OrganizationReplayEventsMetaEndpoint,
+)
+from sentry.replays.endpoints.organization_replay_index import OrganizationReplayIndexEndpoint
+from sentry.replays.endpoints.organization_replay_selector_index import (
+    OrganizationReplaySelectorIndexEndpoint,
+)
+from sentry.replays.endpoints.project_replay_clicks_index import ProjectReplayClicksIndexEndpoint
+from sentry.replays.endpoints.project_replay_details import ProjectReplayDetailsEndpoint
+from sentry.replays.endpoints.project_replay_jobs_delete import (
+    ProjectReplayDeletionJobDetailEndpoint,
+    ProjectReplayDeletionJobsIndexEndpoint,
+)
+from sentry.replays.endpoints.project_replay_recording_segment_details import (
+    ProjectReplayRecordingSegmentDetailsEndpoint,
+)
+from sentry.replays.endpoints.project_replay_recording_segment_index import (
+    ProjectReplayRecordingSegmentIndexEndpoint,
+)
+from sentry.replays.endpoints.project_replay_summary import ProjectReplaySummaryEndpoint
+from sentry.replays.endpoints.project_replay_video_details import ProjectReplayVideoDetailsEndpoint
+from sentry.replays.endpoints.project_replay_viewed_by import ProjectReplayViewedByEndpoint
+from sentry.scm.endpoints.scm_git import ScmGitEndpoint
+from sentry.scm.endpoints.scm_rpc import ScmRpcServiceEndpoint
+from sentry.seer.endpoints.admin_agentic_triage_trigger import SeerAdminAgenticTriageTriggerEndpoint
+from sentry.seer.endpoints.admin_autofix_retry import SeerAdminAutofixRetryEndpoint
+from sentry.seer.endpoints.admin_autofix_single_run import SeerAdminAutofixSingleRunEndpoint
+from sentry.seer.endpoints.admin_metric_breaches import SeerAdminMetricBreachesEndpoint
+from sentry.seer.endpoints.group_ai_autofix import GroupAutofixEndpoint
+from sentry.seer.endpoints.group_ai_summary import GroupAiSummaryEndpoint
+from sentry.seer.endpoints.group_autofix_repos import GroupAutofixReposEndpoint
+from sentry.seer.endpoints.group_autofix_setup_check import GroupAutofixSetupCheck
+from sentry.seer.endpoints.issue_view_title_generate import IssueViewTitleGenerateEndpoint
+from sentry.seer.endpoints.organization_agent_approve import OrganizationAgentApproveEndpoint
+from sentry.seer.endpoints.organization_agent_token import OrganizationAgentTokenEndpoint
+from sentry.seer.endpoints.organization_events_anomalies import OrganizationEventsAnomaliesEndpoint
+from sentry.seer.endpoints.organization_seer_agent_chat import (
+    OrganizationSeerAgentChatEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_agent_update import (
+    OrganizationSeerAgentUpdateEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_autofix_overview import (
+    OrganizationSeerAutofixOverviewEndpoint,
+    OrganizationSeerAutofixScmInfoEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_chat_suggestions import (
+    OrganizationSeerChatSuggestionsEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_credit_check import (
+    OrganizationSeerCreditCheckEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_monitoring_providers import (
+    OrganizationSeerMonitoringConnectionsEndpoint,
+    OrganizationSeerMonitoringIdentityTokenEndpoint,
+    OrganizationSeerMonitoringIntegrationTokenEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_nav_links import OrganizationSeerNavLinksEndpoint
+from sentry.seer.endpoints.organization_seer_onboarding_check import OrganizationSeerOnboardingCheck
+from sentry.seer.endpoints.organization_seer_repo_access import (
+    OrganizationSeerRepoAccessEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_rpc import OrganizationSeerRpcEndpoint
+from sentry.seer.endpoints.organization_seer_runs import OrganizationSeerRunsEndpoint
+from sentry.seer.endpoints.organization_seer_setup_check import OrganizationSeerSetupCheckEndpoint
+from sentry.seer.endpoints.organization_seer_workflow_configs import (
+    OrganizationSeerWorkflowConfigDetailsEndpoint,
+    OrganizationSeerWorkflowConfigsEndpoint,
+)
+from sentry.seer.endpoints.organization_seer_workflow_runs import (
+    OrganizationSeerWorkflowRunsEndpoint,
+)
+from sentry.seer.endpoints.project_seer_agentic_triage import ProjectSeerAgenticTriageEndpoint
+from sentry.seer.endpoints.project_seer_preferences import ProjectSeerPreferencesEndpoint
+from sentry.seer.endpoints.project_seer_repos import (
+    ProjectSeerRepoEndpoint,
+    ProjectSeerReposEndpoint,
+)
+from sentry.seer.endpoints.project_seer_settings import (
+    OrganizationSeerProjectSettingsEndpoint,
+    ProjectSeerSettingsEndpoint,
+)
+from sentry.seer.endpoints.search_agent_start import SearchAgentStartEndpoint
+from sentry.seer.endpoints.search_agent_state import SearchAgentStateEndpoint
+from sentry.seer.endpoints.seer_rpc import SeerRpcServiceEndpoint
+from sentry.seer.endpoints.trace_explorer_ai_translate_agentic import SearchAgentTranslateEndpoint
+from sentry.seer.supergroups.endpoints.organization_supergroup_details import (
+    OrganizationSupergroupDetailsEndpoint,
+)
+from sentry.seer.supergroups.endpoints.organization_supergroups_by_group import (
+    OrganizationSupergroupsByGroupEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.group_external_issue_details import (
+    GroupExternalIssueDetailsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.group_external_issues import GroupExternalIssuesEndpoint
+from sentry.sentry_apps.api.endpoints.installation_details import (
+    SentryAppInstallationDetailsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.installation_external_issue_actions import (
+    SentryAppInstallationExternalIssueActionsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.installation_external_issue_details import (
+    SentryAppInstallationExternalIssueDetailsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.installation_external_issues import (
+    SentryAppInstallationExternalIssuesEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.installation_external_requests import (
+    SentryAppInstallationExternalRequestsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.installation_service_hook_projects import (
+    SentryAppInstallationServiceHookProjectsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.organization_legacy_webhooks import (
+    OrganizationLegacyWebhooksEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.organization_sentry_apps import OrganizationSentryAppsEndpoint
+from sentry.sentry_apps.api.endpoints.project_legacy_webhooks import ProjectLegacyWebhooksEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_app_authorizations import (
+    SentryAppAuthorizationsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.sentry_app_avatar import SentryAppAvatarEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_app_components import (
+    OrganizationSentryAppComponentsEndpoint,
+    SentryAppComponentsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.sentry_app_details import SentryAppDetailsEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_app_features import SentryAppFeaturesEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_app_installations import SentryAppInstallationsEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_app_publish_request import (
+    SentryAppPublishRequestEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.sentry_app_rotate_secret import SentryAppRotateSecretEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_app_stats_details import SentryAppStatsEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_app_webhook_requests import (
+    SentryAppWebhookRequestsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.sentry_apps import SentryAppsEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_apps_stats import SentryAppsStatsEndpoint
+from sentry.sentry_apps.api.endpoints.sentry_internal_app_token_details import (
+    SentryInternalAppTokenDetailsEndpoint,
+)
+from sentry.sentry_apps.api.endpoints.sentry_internal_app_tokens import (
+    SentryInternalAppTokensEndpoint,
+)
+from sentry.service_accounts.endpoints.organization_service_account_tokens import (
+    OrganizationServiceAccountTokenDetailsEndpoint,
+    OrganizationServiceAccountTokenIndexEndpoint,
+)
+from sentry.service_accounts.endpoints.organization_service_account_viewer_context import (
+    OrganizationServiceAccountViewerContextEndpoint,
+)
+from sentry.service_accounts.endpoints.organization_service_accounts import (
+    OrganizationServiceAccountDetailsEndpoint,
+    OrganizationServiceAccountIndexEndpoint,
+)
+from sentry.synapse.endpoints.org_cell_mappings import OrgCellMappingsEndpoint
+from sentry.synapse.endpoints.project_key_cell_mappings import ProjectKeyCellMappingsEndpoint
+from sentry.telemetry_classifiers.endpoints.organization_prebuilt_telemetry_classifiers import (
+    OrganizationPrebuiltTelemetryClassifiersEndpoint,
+)
+from sentry.telemetry_classifiers.endpoints.organization_telemetry_classifier_details import (
+    OrganizationTelemetryClassifierDetailsEndpoint,
+)
+from sentry.telemetry_classifiers.endpoints.organization_telemetry_classifiers import (
+    OrganizationTelemetryClassifiersEndpoint,
+)
+from sentry.tempest.endpoints.tempest_credentials import TempestCredentialsEndpoint
+from sentry.tempest.endpoints.tempest_credentials_details import TempestCredentialsDetailsEndpoint
+from sentry.tempest.endpoints.tempest_ips import TempestIpsEndpoint
+from sentry.timeseries_annotations.endpoints.organization_timeseries_annotation_endpoint import (
+    OrganizationTimeseriesAnnotationEndpoint,
+)
+from sentry.uptime.endpoints.organiation_uptime_alert_index import (
+    OrganizationUptimeAlertIndexEndpoint,
+)
+from sentry.uptime.endpoints.organization_uptime_alert_index_count import (
+    OrganizationUptimeAlertIndexCountEndpoint,
+)
+from sentry.uptime.endpoints.organization_uptime_alert_preview_check import (
+    OrganizationUptimeAlertPreviewCheckEndpoint,
+)
+from sentry.uptime.endpoints.organization_uptime_stats import OrganizationUptimeStatsEndpoint
+from sentry.uptime.endpoints.organization_uptime_summary import OrganizationUptimeSummaryEndpoint
+from sentry.uptime.endpoints.project_uptime_alert_checks_index import (
+    ProjectUptimeAlertCheckIndexEndpoint,
+)
+from sentry.uptime.endpoints.project_uptime_alert_details import ProjectUptimeAlertDetailsEndpoint
+from sentry.uptime.endpoints.project_uptime_alert_index import ProjectUptimeAlertIndexEndpoint
+from sentry.uptime.endpoints.project_uptime_response_capture import (
+    ProjectUptimeResponseCaptureEndpoint,
+)
+from sentry.uptime.endpoints.project_uptime_response_captures_index import (
+    ProjectUptimeResponseCapturesIndexEndpoint,
+)
+from sentry.uptime.endpoints.uptime_ips import UptimeIpsEndpoint
+from sentry.users.api.endpoints.authenticator_index import AuthenticatorIndexEndpoint
+from sentry.users.api.endpoints.user_authenticator_details import UserAuthenticatorDetailsEndpoint
+from sentry.users.api.endpoints.user_authenticator_enroll import UserAuthenticatorEnrollEndpoint
+from sentry.users.api.endpoints.user_authenticator_index import UserAuthenticatorIndexEndpoint
+from sentry.users.api.endpoints.user_avatar import UserAvatarEndpoint
+from sentry.users.api.endpoints.user_details import UserDetailsEndpoint
+from sentry.users.api.endpoints.user_display_preferences import UserDisplayPreferencesEndpoint
+from sentry.users.api.endpoints.user_emails import UserEmailsEndpoint
+from sentry.users.api.endpoints.user_emails_confirm import UserEmailsConfirmEndpoint
+from sentry.users.api.endpoints.user_identity import UserIdentityEndpoint
+from sentry.users.api.endpoints.user_identity_config import (
+    UserIdentityConfigDetailsEndpoint,
+    UserIdentityConfigEndpoint,
+)
+from sentry.users.api.endpoints.user_identity_details import UserIdentityDetailsEndpoint
+from sentry.users.api.endpoints.user_index import UserIndexEndpoint
+from sentry.users.api.endpoints.user_ips import UserIPsEndpoint
+from sentry.users.api.endpoints.user_password import UserPasswordEndpoint
+from sentry.users.api.endpoints.user_permission_details import UserPermissionDetailsEndpoint
+from sentry.users.api.endpoints.user_permissions import UserPermissionsEndpoint
+from sentry.users.api.endpoints.user_permissions_config import UserPermissionsConfigEndpoint
+from sentry.users.api.endpoints.user_regions import UserRegionsEndpoint
+from sentry.workflow_engine.endpoints import urls as workflow_urls
+
+from .endpoints.accept_organization_invite import AcceptOrganizationInvite
+from .endpoints.accept_project_transfer import AcceptProjectTransferEndpoint
+from .endpoints.admin_project_configs import AdminRelayProjectConfigsEndpoint
+from .endpoints.api_application_details import ApiApplicationDetailsEndpoint
+from .endpoints.api_application_rotate_secret import ApiApplicationRotateSecretEndpoint
+from .endpoints.api_applications import ApiApplicationsEndpoint
+from .endpoints.api_authorizations import ApiAuthorizationsEndpoint
+from .endpoints.api_token_details import ApiTokenDetailsEndpoint
+from .endpoints.api_tokens import ApiTokensEndpoint
+from .endpoints.artifact_bundles import ArtifactBundlesEndpoint
+from .endpoints.artifact_lookup import ProjectArtifactLookupEndpoint
+from .endpoints.assistant import AssistantEndpoint
+from .endpoints.auth_2fa import AuthTwoFactorChallengeEndpoint, AuthTwoFactorEndpoint
+from .endpoints.auth_config import AuthConfigEndpoint
+from .endpoints.auth_index import AuthIndexEndpoint
+from .endpoints.auth_login import AuthLoginEndpoint
+from .endpoints.auth_organization_config import AuthOrganizationConfigEndpoint
+from .endpoints.auth_organization_demo_login import AuthDemoLoginEndpoint
+from .endpoints.auth_recovery import AuthRecoveryConfirmEndpoint, AuthRecoveryEndpoint
+from .endpoints.auth_register import AuthRegisterEndpoint
+from .endpoints.auth_validate import AuthValidateEndpoint
+from .endpoints.broadcast_details import BroadcastDetailsEndpoint
+from .endpoints.broadcast_index import BroadcastIndexEndpoint
+from .endpoints.builtin_symbol_sources import BuiltinSymbolSourcesEndpoint
+from .endpoints.catchall import CatchallEndpoint
+from .endpoints.chunk import ChunkUploadEndpoint
+from .endpoints.data_scrubbing_selector_suggestions import DataScrubbingSelectorSuggestionsEndpoint
+from .endpoints.debug_files import (
+    AssociateDSymFilesEndpoint,
+    DebugFilesEndpoint,
+    DifAssembleEndpoint,
+    ProguardArtifactReleasesEndpoint,
+    SourceMapsEndpoint,
+    UnknownDebugFilesEndpoint,
+)
+from .endpoints.email_capture import EmailCaptureEndpoint
+from .endpoints.event_apple_crash_report import EventAppleCrashReportEndpoint
+from .endpoints.event_attachment_details import EventAttachmentDetailsEndpoint
+from .endpoints.event_attachments import EventAttachmentsEndpoint
+from .endpoints.event_file_committers import EventFileCommittersEndpoint
+from .endpoints.filechange import CommitFileChangeEndpoint
+from .endpoints.frontend_version import FrontendVersionEndpoint
+from .endpoints.index import IndexEndpoint
+from .endpoints.internal import (
+    InternalBeaconEndpoint,
+    InternalEnvironmentEndpoint,
+    InternalFeatureFlagsEndpoint,
+    InternalMailEndpoint,
+    InternalPackagesEndpoint,
+    InternalRpcServiceEndpoint,
+    InternalWarningsEndpoint,
+)
+from .endpoints.organization_access_request_details import OrganizationAccessRequestDetailsEndpoint
+from .endpoints.organization_agentic_onboarding import (
+    OrganizationAgenticOnboardingRunIndexEndpoint,
+    OrganizationAgenticOnboardingStatusEndpoint,
+)
+from .endpoints.organization_agentic_onboarding_run_details import (
+    OrganizationAgenticOnboardingRunDetailsEndpoint,
+)
+from .endpoints.organization_api_key_details import OrganizationApiKeyDetailsEndpoint
+from .endpoints.organization_api_key_index import OrganizationApiKeyIndexEndpoint
+from .endpoints.organization_artifactbundle_assemble import (
+    OrganizationArtifactBundleAssembleEndpoint,
+)
+from .endpoints.organization_attribute_mappings import OrganizationAttributeMappingsEndpoint
+from .endpoints.organization_auth_provider_details import OrganizationAuthProviderDetailsEndpoint
+from .endpoints.organization_auth_providers import OrganizationAuthProvidersEndpoint
+from .endpoints.organization_events import OrganizationEventsEndpoint
+from .endpoints.organization_events_dropped import OrganizationEventsDroppedEndpoint
+from .endpoints.organization_events_facets import OrganizationEventsFacetsEndpoint
+from .endpoints.organization_events_heatmap import OrganizationEventsHeatmapEndpoint
+from .endpoints.organization_events_meta import OrganizationEventsMetaEndpoint
+from .endpoints.organization_events_stats import OrganizationEventsStatsEndpoint
+from .endpoints.organization_events_timeseries import OrganizationEventsTimeseriesEndpoint
+from .endpoints.organization_events_validate import OrganizationEventsValidateEndpoint
+from .endpoints.organization_measurements_meta import OrganizationMeasurementsMeta
+from .endpoints.organization_metrics_meta import (
+    OrganizationMetricsCompatibility,
+    OrganizationMetricsCompatibilitySums,
+)
+from .endpoints.organization_on_demand_metrics_estimation_stats import (
+    OrganizationOnDemandMetricsEstimationStatsEndpoint,
+)
+from .endpoints.organization_onboarding_continuation_email import (
+    OrganizationOnboardingContinuationEmail,
+)
+from .endpoints.organization_onboarding_tasks import OrganizationOnboardingTaskEndpoint
+from .endpoints.organization_profiling_functions import OrganizationProfilingFunctionTrendsEndpoint
+from .endpoints.organization_profiling_profiles import (
+    OrganizationProfilingChunkAttachmentsEndpoint,
+    OrganizationProfilingChunksEndpoint,
+    OrganizationProfilingFlamegraphEndpoint,
+    OrganizationProfilingHasChunksEndpoint,
+)
+from .endpoints.organization_projects_sent_first_event import (
+    OrganizationProjectsSentFirstEventEndpoint,
+)
+from .endpoints.organization_recent_searches import OrganizationRecentSearchesEndpoint
+from .endpoints.organization_relay_usage import OrganizationRelayUsage
+from .endpoints.organization_sdk_deprecations import OrganizationSdkDeprecationsEndpoint
+from .endpoints.organization_sdk_updates import (
+    OrganizationSdksEndpoint,
+    OrganizationSdkUpdatesEndpoint,
+)
+from .endpoints.organization_sessions import OrganizationSessionsEndpoint
+from .endpoints.organization_stats import OrganizationStatsEndpoint
+from .endpoints.organization_stats_v2 import OrganizationStatsEndpointV2
+from .endpoints.organization_tagkey_values import OrganizationTagKeyValuesEndpoint
+from .endpoints.organization_tags import OrganizationTagsEndpoint
+from .endpoints.organization_trace import OrganizationTraceEndpoint
+from .endpoints.organization_trace_logs import OrganizationTraceLogsEndpoint
+from .endpoints.organization_trace_meta import OrganizationTraceMetaEndpoint
+from .endpoints.organization_traces import OrganizationTracesEndpoint
+from .endpoints.organization_weekly_report_project_exclusion_details import (
+    OrganizationWeeklyReportProjectExclusionDetailsEndpoint,
+)
+from .endpoints.organization_weekly_report_project_exclusions import (
+    OrganizationWeeklyReportProjectExclusionsEndpoint,
+)
+from .endpoints.project_artifact_bundle_file_details import ProjectArtifactBundleFileDetailsEndpoint
+from .endpoints.project_artifact_bundle_files import ProjectArtifactBundleFilesEndpoint
+from .endpoints.project_commits import ProjectCommitsEndpoint
+from .endpoints.project_create_sample import ProjectCreateSampleEndpoint
+from .endpoints.project_custom_inbound_filter_validate import (
+    CustomInboundFilterValidateEndpoint,
+)
+from .endpoints.project_custom_inbound_filters import (
+    CustomInboundFilterDetailsEndpoint,
+    CustomInboundFiltersEndpoint,
+)
+from .endpoints.project_filter_details import ProjectFilterDetailsEndpoint
+from .endpoints.project_filters import ProjectFiltersEndpoint
+from .endpoints.project_member_index import ProjectMemberIndexEndpoint
+from .endpoints.project_performance_general_settings import (
+    ProjectPerformanceGeneralSettingsEndpoint,
+)
+from .endpoints.project_profiling_profile import (
+    ProjectProfilingChunkAttachmentEndpoint,
+    ProjectProfilingProfileEndpoint,
+    ProjectProfilingRawChunkEndpoint,
+    ProjectProfilingRawProfileEndpoint,
+)
+from .endpoints.project_repo import ProjectRepoEndpoint
+from .endpoints.project_repo_path_parsing import ProjectRepoPathParsingEndpoint
+from .endpoints.project_reprocessing import ProjectReprocessingEndpoint
+from .endpoints.project_servicehook_details import ProjectServiceHookDetailsEndpoint
+from .endpoints.project_servicehooks import ProjectServiceHooksEndpoint
+from .endpoints.project_symbol_sources import ProjectSymbolSourcesEndpoint
+from .endpoints.project_tagkey_details import ProjectTagKeyDetailsEndpoint
+from .endpoints.project_tagkey_values import ProjectTagKeyValuesEndpoint
+from .endpoints.project_tags import ProjectTagsEndpoint
+from .endpoints.project_trace_item_details import ProjectTraceItemDetailsEndpoint
+from .endpoints.project_transaction_names import ProjectTransactionNamesCluster
+from .endpoints.project_transaction_threshold import ProjectTransactionThresholdEndpoint
+from .endpoints.project_transaction_threshold_override import (
+    ProjectTransactionThresholdOverrideEndpoint,
+)
+from .endpoints.prompts_activity import PromptsActivityEndpoint
+from .endpoints.relay import (
+    RelayDetailsEndpoint,
+    RelayHealthCheck,
+    RelayProjectConfigsEndpoint,
+    RelayPublicKeysEndpoint,
+    RelayRegisterChallengeEndpoint,
+    RelayRegisterResponseEndpoint,
+)
+from .endpoints.seer_models import SeerModelsEndpoint
+from .endpoints.setup_wizard import SetupWizard, SetupWizardSession
+from .endpoints.system_health import SystemHealthEndpoint
+from .endpoints.system_options import SystemOptionsEndpoint
+from .endpoints.user_organizationintegrations import UserOrganizationIntegrationsEndpoint
+from .endpoints.user_organizations import UserOrganizationsEndpoint
+from .endpoints.user_subscriptions import UserSubscriptionsEndpoint
+
+__all__ = ("urlpatterns",)
+
+
+# issues endpoints are available both top level (by numerical ID) as well as coupled
+# to the organization (and queryable via short ID)
+
+
+# NOTE: Start adding to ISSUES_URLS instead of here because (?:issues|groups)
+# cannot be reversed and we prefer to always use issues instead of groups
+def create_group_urls(
+    name_prefix: str, is_legacy_path: bool = False
+) -> list[URLPattern | URLResolver]:
+    # Served on both the org-scoped path and the legacy unprefixed `/issues/` path.
+    # New routes should be added to the org-scoped path only.
+    shared: list[URLPattern | URLResolver] = [
+        re_path(
+            r"^(?P<issue_id>[^/]+)/$",
+            GroupDetailsEndpoint.as_view(),
+            name=f"{name_prefix}-group-details",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/activities/$",
+            GroupActivitiesEndpoint.as_view(),
+            name=f"{name_prefix}-group-activities",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/events/$",
+            GroupEventsEndpoint.as_view(),
+            name=f"{name_prefix}-group-events",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/events/(?P<event_id>(?:latest|oldest|recommended|\d+|[A-Fa-f0-9-]{32,36}))/$",
+            GroupEventDetailsEndpoint.as_view(),
+            name=f"{name_prefix}-group-event-details",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/(?:notes|comments)/$",
+            GroupNotesEndpoint.as_view(),
+            name=f"{name_prefix}-group-notes",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/(?:notes|comments)/(?P<note_id>[^/]+)/$",
+            GroupNotesDetailsEndpoint.as_view(),
+            name=f"{name_prefix}-group-note-details",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/hashes/$",
+            GroupHashesEndpoint.as_view(),
+            name=f"{name_prefix}-group-hashes",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/reprocessing/$",
+            GroupReprocessingEndpoint.as_view(),
+            name=f"{name_prefix}-group-reprocessing",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/stats/$",
+            GroupStatsEndpoint.as_view(),
+            name=f"{name_prefix}-group-stats",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/tags/$",
+            GroupTagsEndpoint.as_view(),
+            name=f"{name_prefix}-group-tags",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/tags/(?P<key>[^/]+)/$",
+            GroupTagKeyDetailsEndpoint.as_view(),
+            name=f"{name_prefix}-group-tag-key-details",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/tags/(?P<key>[^/]+)/values/$",
+            GroupTagKeyValuesEndpoint.as_view(),
+            name=f"{name_prefix}-group-tag-key-values",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/(?:user-feedback|user-reports)/$",
+            GroupUserReportsEndpoint.as_view(),
+            name=f"{name_prefix}-group-user-reports",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/attachments/$",
+            GroupAttachmentsEndpoint.as_view(),
+            name=f"{name_prefix}-group-attachments",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/similar/$",
+            GroupSimilarIssuesEndpoint.as_view(),
+            name=f"{name_prefix}-group-similar",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/external-issues/$",
+            GroupExternalIssuesEndpoint.as_view(),
+            name=f"{name_prefix}-group-external-issues",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/external-issues/(?P<external_issue_id>\d+)/$",
+            GroupExternalIssueDetailsEndpoint.as_view(),
+            name=f"{name_prefix}-group-external-issues-details",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/integrations/$",
+            GroupIntegrationsEndpoint.as_view(),
+            name=f"{name_prefix}-group-integrations",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/integrations/(?P<integration_id>\d+)/$",
+            GroupIntegrationDetailsEndpoint.as_view(),
+            name=f"{name_prefix}-group-integration-details",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/current-release/$",
+            GroupCurrentReleaseEndpoint.as_view(),
+            name=f"{name_prefix}-group-current-release",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/related-issues/$",
+            RelatedIssuesEndpoint.as_view(),
+            name=f"{name_prefix}-related-issues",
+        ),
+    ]
+
+    # Served only under `/organizations/{org}/issues/`.
+    org_scoped_only: list[URLPattern | URLResolver] = [
+        re_path(
+            r"^(?P<issue_id>[^/]+)/impact/assess/$",
+            GroupImpactAssessmentEndpoint.as_view(),
+            name=f"{name_prefix}-group-impact-assessment",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/autofix/$",
+            GroupAutofixEndpoint.as_view(),
+            name=f"{name_prefix}-group-autofix",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/autofix/setup/$",
+            GroupAutofixSetupCheck.as_view(),
+            name=f"{name_prefix}-group-autofix-setup",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/autofix/repos/$",
+            GroupAutofixReposEndpoint.as_view(),
+            name=f"{name_prefix}-group-autofix-repos",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/summarize/$",
+            GroupAiSummaryEndpoint.as_view(),
+            name=f"{name_prefix}-group-ai-summary",
+        ),
+        re_path(
+            r"^(?P<issue_id>[^/]+)/related/$",
+            GroupRelatedEndpoint.as_view(),
+            name=f"{name_prefix}-related",
+        ),
+    ]
+
+    if is_legacy_path:
+        return shared
+    return shared + org_scoped_only
+
+
+AUTH_URLS = [
+    re_path(
+        r"^oauth/device/$",
+        OAuthDeviceEndpoint.as_view(),
+        name="sentry-api-0-oauth-device",
+    ),
+    re_path(
+        r"^oauth/device/context/$",
+        OAuthDeviceContextEndpoint.as_view(),
+        name="sentry-api-0-oauth-device-context",
+    ),
+    re_path(
+        r"^oauth/authorize/$",
+        OAuthAuthorizeEndpoint.as_view(),
+        name="sentry-api-0-oauth-authorize",
+    ),
+    re_path(
+        r"^oauth/authorize/context/$",
+        OAuthAuthorizeContextEndpoint.as_view(),
+        name="sentry-api-0-oauth-authorize-context",
+    ),
+    re_path(
+        r"^$",
+        AuthIndexEndpoint.as_view(),
+        name="sentry-api-0-auth",
+    ),
+    re_path(
+        r"^config/$",
+        AuthConfigEndpoint.as_view(),
+        name="sentry-api-0-auth-config",
+    ),
+    re_path(
+        r"^login/$",
+        AuthLoginEndpoint.as_view(),
+        name="sentry-api-0-auth-login",
+    ),
+    re_path(
+        r"^register/$",
+        AuthRegisterEndpoint.as_view(),
+        name="sentry-api-0-auth-register",
+    ),
+    re_path(
+        r"^organizations/(?P<organization_id_or_slug>[^/]+)/demo/$",
+        AuthDemoLoginEndpoint.as_view(),
+        name="sentry-api-0-auth-demo-login",
+    ),
+    re_path(
+        r"^organizations/(?P<organization_id_or_slug>[^/]+)/config/$",
+        AuthOrganizationConfigEndpoint.as_view(),
+        name="sentry-api-0-auth-organization-config",
+    ),
+    re_path(
+        r"^recovery/$",
+        AuthRecoveryEndpoint.as_view(),
+        name="sentry-api-0-auth-recovery",
+    ),
+    re_path(
+        r"^recovery/confirm/$",
+        AuthRecoveryConfirmEndpoint.as_view(),
+        name="sentry-api-0-auth-recovery-confirm",
+    ),
+    re_path(
+        r"^2fa/$",
+        AuthTwoFactorEndpoint.as_view(),
+        name="sentry-api-0-auth-2fa",
+    ),
+    re_path(
+        r"^2fa/challenge/$",
+        AuthTwoFactorChallengeEndpoint.as_view(),
+        name="sentry-api-0-auth-2fa-challenge",
+    ),
+    re_path(
+        r"^validate/$",
+        AuthValidateEndpoint.as_view(),
+        name="sentry-api-0-auth-test",
+    ),
+]
+
+BROADCAST_URLS = [
+    re_path(
+        r"^$",
+        BroadcastIndexEndpoint.as_view(),
+        name="sentry-api-0-broadcast-index",
+    ),
+    re_path(
+        r"^(?P<broadcast_id>[^/]+)/$",
+        BroadcastDetailsEndpoint.as_view(),
+        name="sentry-api-0-broadcast-details",
+    ),
+]
+
+RELOCATION_URLS = [
+    re_path(
+        r"^$",
+        RelocationIndexEndpoint.as_view(),
+        name="sentry-api-0-relocations-index",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/$",
+        RelocationDetailsEndpoint.as_view(),
+        name="sentry-api-0-relocations-details",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/abort/$",
+        RelocationAbortEndpoint.as_view(),
+        name="sentry-api-0-relocations-abort",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/cancel/$",
+        RelocationCancelEndpoint.as_view(),
+        name="sentry-api-0-relocations-cancel",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/pause/$",
+        RelocationPauseEndpoint.as_view(),
+        name="sentry-api-0-relocations-pause",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/recover/$",
+        RelocationRecoverEndpoint.as_view(),
+        name="sentry-api-0-relocations-recover",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/retry/$",
+        RelocationRetryEndpoint.as_view(),
+        name="sentry-api-0-relocations-retry",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/unpause/$",
+        RelocationUnpauseEndpoint.as_view(),
+        name="sentry-api-0-relocations-unpause",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/artifacts/$",
+        RelocationArtifactIndexEndpoint.as_view(),
+        name="sentry-api-0-relocations-artifacts-index",
+    ),
+    re_path(
+        r"^(?P<relocation_uuid>[^/]+)/artifacts/(?P<artifact_kind>[^/]+)/(?P<file_name>[^/]+)$",
+        RelocationArtifactDetailsEndpoint.as_view(),
+        name="sentry-api-0-relocations-artifacts-details",
+    ),
+]
+
+RELAY_URLS = [
+    re_path(
+        r"^register/challenge/$",
+        RelayRegisterChallengeEndpoint.as_view(),
+        name="sentry-api-0-relay-register-challenge",
+    ),
+    re_path(
+        r"^register/response/$",
+        RelayRegisterResponseEndpoint.as_view(),
+        name="sentry-api-0-relay-register-response",
+    ),
+    re_path(
+        r"^projectconfigs/$",
+        RelayProjectConfigsEndpoint.as_view(),
+        name="sentry-api-0-relay-projectconfigs",
+    ),
+    re_path(
+        r"^publickeys/$",
+        RelayPublicKeysEndpoint.as_view(),
+        name="sentry-api-0-relay-publickeys",
+    ),
+    re_path(
+        r"^live/$",
+        RelayHealthCheck.as_view(),
+        name="sentry-api-0-relays-healthcheck",
+    ),
+    re_path(
+        r"^(?P<relay_id>[^/]+)/$",
+        RelayDetailsEndpoint.as_view(),
+        name="sentry-api-0-relays-details",
+    ),
+]
+
+USER_URLS = [
+    re_path(
+        r"^$",
+        UserIndexEndpoint.as_view(),
+        name="sentry-api-0-user-index",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/$",
+        UserDetailsEndpoint.as_view(),
+        name="sentry-api-0-user-details",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/regions/$",
+        UserRegionsEndpoint.as_view(),
+        name="sentry-api-0-user-regions",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/avatar/$",
+        UserAvatarEndpoint.as_view(),
+        name="sentry-api-0-user-avatar",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/authenticators/$",
+        UserAuthenticatorIndexEndpoint.as_view(),
+        name="sentry-api-0-user-authenticator-index",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/authenticators/(?P<interface_id>[^/]+)/enroll/$",
+        UserAuthenticatorEnrollEndpoint.as_view(),
+        name="sentry-api-0-user-authenticator-enroll",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/authenticators/(?P<auth_id>[^/]+)/(?P<interface_device_id>[^/]+)/$",
+        UserAuthenticatorDetailsEndpoint.as_view(),
+        name="sentry-api-0-user-authenticator-device-details",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/authenticators/(?P<auth_id>[^/]+)/$",
+        UserAuthenticatorDetailsEndpoint.as_view(),
+        name="sentry-api-0-user-authenticator-details",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/display-preferences/$",
+        UserDisplayPreferencesEndpoint.as_view(),
+        name="sentry-api-0-user-display-preferences",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/emails/$",
+        UserEmailsEndpoint.as_view(),
+        name="sentry-api-0-user-emails",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/emails/confirm/$",
+        UserEmailsConfirmEndpoint.as_view(),
+        name="sentry-api-0-user-emails-confirm",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/identities/(?P<identity_id>[^/]+)/$",
+        UserIdentityDetailsEndpoint.as_view(),
+        name="sentry-api-0-user-identity-details",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/identities/$",
+        UserIdentityEndpoint.as_view(),
+        name="sentry-api-0-user-identity",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/ips/$",
+        UserIPsEndpoint.as_view(),
+        name="sentry-api-0-user-ips",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/organizations/$",
+        UserOrganizationsEndpoint.as_view(),
+        name="sentry-api-0-user-organizations",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/notifications/$",
+        UserNotificationDetailsEndpoint.as_view(),
+        name="sentry-api-0-user-notifications",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/notifications/email/$",
+        UserNotificationEmailEndpoint.as_view(),
+        name="sentry-api-0-user-notifications-email",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/notification-options/$",
+        UserNotificationSettingsOptionsEndpoint.as_view(),
+        name="sentry-api-0-user-notification-options",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/notification-options/(?P<notification_option_id>[^/]+)/$",
+        UserNotificationSettingsOptionsDetailEndpoint.as_view(),
+        name="sentry-api-0-user-notification-options-details",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/notification-providers/$",
+        UserNotificationSettingsProvidersEndpoint.as_view(),
+        name="sentry-api-0-user-notification-providers",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/password/$",
+        UserPasswordEndpoint.as_view(),
+        name="sentry-api-0-user-password",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/permissions/$",
+        UserPermissionsEndpoint.as_view(),
+        name="sentry-api-0-user-permissions",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/permissions/config/$",
+        UserPermissionsConfigEndpoint.as_view(),
+        name="sentry-api-0-user-permissions-config",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/permissions/(?P<permission_name>[^/]+)/$",
+        UserPermissionDetailsEndpoint.as_view(),
+        name="sentry-api-0-user-permission-details",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/subscriptions/$",
+        UserSubscriptionsEndpoint.as_view(),
+        name="sentry-api-0-user-subscriptions",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/organization-integrations/$",
+        UserOrganizationIntegrationsEndpoint.as_view(),
+        name="sentry-api-0-user-organization-integrations",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/user-identities/$",
+        UserIdentityConfigEndpoint.as_view(),
+        name="sentry-api-0-user-identity-config",
+    ),
+    re_path(
+        r"^(?P<user_id>[^/]+)/user-identities/(?P<category>[\w-]+)/(?P<identity_id>[^/]+)/$",
+        UserIdentityConfigDetailsEndpoint.as_view(),
+        name="sentry-api-0-user-identity-config-details",
+    ),
+]
+
+ORGANIZATION_URLS: list[URLPattern | URLResolver] = [
+    re_path(
+        r"^$",
+        OrganizationIndexEndpoint.as_view(),
+        name="sentry-api-0-organizations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/$",
+        OrganizationDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?:issues|groups)/",
+        include(create_group_urls("sentry-api-0-organization-group")),
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issues/(?P<issue_id>[^/]+)/derived-data/debug/$",
+        DebugGroupDerivedDataEndpoint.as_view(),
+        name="sentry-api-0-organization-group-derived-data-debug",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?:issues|groups)/(?P<issue_id>[^/]+)/pull-requests/$",
+        GroupPullRequestsEndpoint.as_view(),
+        name="sentry-api-0-organization-group-pull-requests",
+    ),
+    # first-last-release is only available via org-scoped URL (legacy URL deprecated for cellularization)
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?:issues|groups)/(?P<issue_id>[^/]+)/first-last-release/$",
+        GroupFirstLastReleaseEndpoint.as_view(),
+        name="sentry-api-0-organization-group-first-last-release",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/shared/(?:issues|groups)/(?P<share_id>[^/]+)/$",
+        SharedGroupDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-shared-group-details",
+    ),
+    # Data Export
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/data-export/$",
+        DataExportEndpoint.as_view(),
+        name="sentry-api-0-organization-data-export",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/data-export/(?P<data_export_id>[^/]+)/$",
+        DataExportDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-data-export-details",
+    ),
+    # Data Secrecy
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/data-secrecy/$",
+        WaiveDataSecrecyEndpoint.as_view(),
+        name="sentry-api-0-data-secrecy",
+    ),
+    # Intercom JWT for identity verification
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/intercom-jwt/$",
+        OrganizationIntercomJwtEndpoint.as_view(),
+        name="sentry-api-0-organization-intercom-jwt",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/chunk-upload/$",
+        ChunkUploadEndpoint.as_view(),
+        name="sentry-api-0-chunk-upload",
+    ),
+    # Code Path Mappings
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/code-mappings/$",
+        OrganizationCodeMappingsEndpoint.as_view(),
+        name="sentry-api-0-organization-code-mappings",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/code-mappings/bulk/$",
+        OrganizationCodeMappingsBulkEndpoint.as_view(),
+        name="sentry-api-0-organization-code-mappings-bulk",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/derive-code-mappings/$",
+        OrganizationDeriveCodeMappingsEndpoint.as_view(),
+        name="sentry-api-0-organization-derive-code-mappings",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/code-mapping-prefixes/repo/$",
+        OrganizationCodeMappingRepoPrefixesEndpoint.as_view(),
+        name="sentry-api-0-organization-code-mapping-repo-prefixes",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/code-mappings/(?P<config_id>[^/]+)/$",
+        OrganizationCodeMappingDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-code-mapping-details",
+    ),
+    # Codeowners
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/code-mappings/(?P<config_id>[^/]+)/codeowners/$",
+        OrganizationCodeMappingCodeOwnersEndpoint.as_view(),
+        name="sentry-api-0-organization-code-mapping-codeowners",
+    ),
+    # Data Forwarding
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/forwarding/$",
+        DataForwardingIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-forwarding",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/forwarding/(?P<data_forwarder_id>[^/]+)/$",
+        DataForwardingDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-forwarding-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/codeowners-associations/$",
+        OrganizationCodeOwnersAssociationsEndpoint.as_view(),
+        name="sentry-api-0-organization-codeowners-associations",
+    ),
+    # Discover
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/discover/homepage/$",
+        DiscoverHomepageQueryEndpoint.as_view(),
+        name="sentry-api-0-discover-homepage-query",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/discover/saved/$",
+        DiscoverSavedQueriesEndpoint.as_view(),
+        name="sentry-api-0-discover-saved-queries",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/discover/saved/(?P<query_id>\d+)/$",
+        DiscoverSavedQueryDetailEndpoint.as_view(),
+        name="sentry-api-0-discover-saved-query-detail",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/discover/saved/(?P<query_id>\d+)/visit/$",
+        DiscoverSavedQueryVisitEndpoint.as_view(),
+        name="sentry-api-0-discover-saved-query-visit",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/discover/saved/(?P<id>\d+)/starred/$",
+        DiscoverSavedQueryStarredEndpoint.as_view(),
+        name="sentry-api-0-discover-saved-query-starred",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/key-transactions/$",
+        KeyTransactionEndpoint.as_view(),
+        name="sentry-api-0-organization-key-transactions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/key-transactions-list/$",
+        KeyTransactionListEndpoint.as_view(),
+        name="sentry-api-0-organization-key-transactions-list",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/project-transaction-threshold-override/$",
+        ProjectTransactionThresholdOverrideEndpoint.as_view(),
+        name="sentry-api-0-organization-project-transaction-threshold-override",
+    ),
+    # Explore
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/starred-service-spans/$",
+        OrganizationStarredServiceSpansEndpoint.as_view(),
+        name="sentry-api-0-organization-starred-service-spans",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/saved/$",
+        ExploreSavedQueriesEndpoint.as_view(),
+        name="sentry-api-0-explore-saved-queries",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/saved/(?P<id>\d+)/$",
+        ExploreSavedQueryDetailEndpoint.as_view(),
+        name="sentry-api-0-explore-saved-query-detail",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/formulas/$",
+        OrganizationExploreFormulas.as_view(),
+        name="sentry-api-0-explore-formulas",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/formulas/(?P<id>\d+)/$",
+        OrganizationExploreFormulasDetail.as_view(),
+        name="sentry-api-0-explore-formulas-detail",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/saved/(?P<id>\d+)/visit/$",
+        ExploreSavedQueryVisitEndpoint.as_view(),
+        name="sentry-api-0-explore-saved-query-visit",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/saved/(?P<id>\d+)/starred/$",
+        ExploreSavedQueryStarredEndpoint.as_view(),
+        name="sentry-api-0-explore-saved-query-starred",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/all-queries/$",
+        SavedQueriesEndpoint.as_view(),
+        name="sentry-api-0-explore-all-queries",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/explore/all-queries/starred/order/$",
+        SavedQueryStarredOrderEndpoint.as_view(),
+        name="sentry-api-0-explore-all-queries-starred-order",
+    ),
+    # Attribute Mappings
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/attribute-mappings/$",
+        OrganizationAttributeMappingsEndpoint.as_view(),
+        name="sentry-api-0-organization-attribute-mappings",
+    ),
+    # Dashboards
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/$",
+        OrganizationDashboardsEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboards",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/starred/$",
+        OrganizationDashboardsStarredEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-starred",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/starred/order/$",
+        OrganizationDashboardsStarredOrderEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-starred-order",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/widgets/$",
+        OrganizationDashboardWidgetDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-widget-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/generate/$",
+        OrganizationDashboardGenerateEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboards-generate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/(?P<dashboard_id>[^/]+)/$",
+        OrganizationDashboardDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/(?P<dashboard_id>[^/]+)/visit/$",
+        OrganizationDashboardVisitEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-visit",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/(?P<dashboard_id>[^/]+)/favorite/$",
+        OrganizationDashboardFavoriteEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-favorite",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/(?P<dashboard_id>[^/]+)/revisions/$",
+        OrganizationDashboardRevisionsEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-revisions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/(?P<dashboard_id>[^/]+)/revisions/(?P<revision_id>[^/]+)/$",
+        OrganizationDashboardRevisionDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-revision-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dashboards/(?P<dashboard_id>[^/]+)/revisions/(?P<revision_id>[^/]+)/restore/$",
+        OrganizationDashboardRevisionRestoreEndpoint.as_view(),
+        name="sentry-api-0-organization-dashboard-revision-restore",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/shortids/(?P<issue_id>[^/]+)/$",
+        ShortIdLookupEndpoint.as_view(),
+        name="sentry-api-0-short-id-lookup",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/eventids/(?P<event_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/$",
+        EventIdLookupEndpoint.as_view(),
+        name="sentry-api-0-event-id-lookup",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/data-scrubbing-selector-suggestions/$",
+        DataScrubbingSelectorSuggestionsEndpoint.as_view(),
+        name="sentry-api-0-data-scrubbing-selector-suggestions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/access-requests/$",
+        OrganizationAccessRequestDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-access-requests",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/access-requests/(?P<request_id>\d+)/$",
+        OrganizationAccessRequestDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-access-request-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/api-keys/$",
+        OrganizationApiKeyIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-api-key-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/api-keys/(?P<api_key_id>[^/]+)/$",
+        OrganizationApiKeyDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-api-key-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/project-keys/$",
+        OrganizationProjectKeysEndpoint.as_view(),
+        name="sentry-api-0-organization-project-keys",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/audit-logs/$",
+        OrganizationAuditLogsEndpoint.as_view(),
+        name="sentry-api-0-organization-audit-logs",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/auth-provider/$",
+        OrganizationAuthProviderDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-auth-provider",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/auth-providers/$",
+        OrganizationAuthProvidersEndpoint.as_view(),
+        name="sentry-api-0-organization-auth-providers",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/avatar/$",
+        OrganizationAvatarEndpoint.as_view(),
+        name="sentry-api-0-organization-avatar",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/artifactbundle/assemble/$",
+        OrganizationArtifactBundleAssembleEndpoint.as_view(),
+        name="sentry-api-0-organization-artifactbundle-assemble",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/config/integrations/$",
+        OrganizationConfigIntegrationsEndpoint.as_view(),
+        name="sentry-api-0-organization-config-integrations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sampling/effective-sample-rate/$",
+        OrganizationSamplingEffectiveSampleRateEndpoint.as_view(),
+        name="sentry-api-0-organization-sampling-effective-sample-rate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sdk-updates/$",
+        OrganizationSdkUpdatesEndpoint.as_view(),
+        name="sentry-api-0-organization-sdk-updates",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sdk-deprecations/$",
+        OrganizationSdkDeprecationsEndpoint.as_view(),
+        name="sentry-api-0-organization-sdk-deprecations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sdks/$",
+        OrganizationSdksEndpoint.as_view(),
+        name="sentry-api-0-organization-sdks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events/$",
+        OrganizationEventsEndpoint.as_view(),
+        name="sentry-api-0-organization-events",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events/validate/$",
+        OrganizationEventsValidateEndpoint.as_view(),
+        name="sentry-api-0-organization-events-validate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events/(?P<project_id_or_slug>[^/]+):(?P<event_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/$",
+        OrganizationEventDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-event-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events-stats/$",
+        OrganizationEventsStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-events-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events-timeseries/$",
+        OrganizationEventsTimeseriesEndpoint.as_view(),
+        name="sentry-api-0-organization-events-timeseries",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events-dropped/$",
+        OrganizationEventsDroppedEndpoint.as_view(),
+        name="sentry-api-0-organization-events-dropped",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events-heatmap/$",
+        OrganizationEventsHeatmapEndpoint.as_view(),
+        name="sentry-api-0-organization-events-heatmap",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events/anomalies/$",
+        OrganizationEventsAnomaliesEndpoint.as_view(),
+        name="sentry-api-0-organization-events-anomalies",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/agent/token/$",
+        OrganizationAgentTokenEndpoint.as_view(),
+        name="sentry-api-0-organization-agent-token",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/service-accounts/$",
+        OrganizationServiceAccountIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-service-accounts",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/service-accounts/(?P<service_account_id>\d+)/$",
+        OrganizationServiceAccountDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-service-account-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/service-accounts/(?P<service_account_id>\d+)/tokens/$",
+        OrganizationServiceAccountTokenIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-service-account-tokens",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/service-accounts/(?P<service_account_id>\d+)/tokens/(?P<token_id>\d+)/$",
+        OrganizationServiceAccountTokenDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-service-account-token-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/service-accounts/(?P<service_account_id>\d+)/viewer-context/$",
+        OrganizationServiceAccountViewerContextEndpoint.as_view(),
+        name="sentry-api-0-organization-service-account-viewer-context",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/agent/approve/$",
+        OrganizationAgentApproveEndpoint.as_view(),
+        name="sentry-api-0-organization-agent-approve",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/traces/$",
+        OrganizationTracesEndpoint.as_view(),
+        name="sentry-api-0-organization-traces",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/weekly-report-project-exclusions/$",
+        OrganizationWeeklyReportProjectExclusionsEndpoint.as_view(),
+        name="sentry-api-0-organization-weekly-report-project-exclusions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/weekly-report-project-exclusions/(?P<project_id_or_slug>[^/]+)/$",
+        OrganizationWeeklyReportProjectExclusionDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-weekly-report-project-exclusion-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/ai-conversations/$",
+        OrganizationAIConversationsEndpoint.as_view(),
+        name="sentry-api-0-organization-ai-conversations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/agents/conversations/$",
+        OrganizationAIConversationsEndpoint.as_view(),
+        name="sentry-api-0-organization-agent-conversations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/ai-conversations/(?P<conversation_id>[^/]+)/$",
+        OrganizationAIConversationDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-ai-conversation-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/agents/conversations/(?P<conversation_id>[^/]+)/$",
+        OrganizationAIConversationDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-agent-conversation-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/classifiers/$",
+        OrganizationTelemetryClassifiersEndpoint.as_view(),
+        name="sentry-api-0-organization-telemetry-classifiers",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/classifiers/prebuilt/$",
+        OrganizationPrebuiltTelemetryClassifiersEndpoint.as_view(),
+        name="sentry-api-0-organization-prebuilt-telemetry-classifiers",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/classifiers/(?P<classifier_id>[^/]+)/$",
+        OrganizationTelemetryClassifierDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-telemetry-classifier-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/attributes/$",
+        OrganizationTraceItemAttributesEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-attributes",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/attributes/merged/$",
+        OrganizationTraceItemAttributesMergedEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-attributes-merged",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/attributes/details/$",
+        OrganizationTraceItemAttributeDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-attribute-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/attributes/validate/$",
+        OrganizationTraceItemAttributeValidateEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-attributes-validate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/attributes/(?P<key>[^/]+)/context/$",
+        OrganizationTraceItemAttributeContextEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-attribute-context",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/metrics/(?P<metric>[^/]+)/context/$",
+        OrganizationTraceItemMetricContextEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-metric-context",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/attributes/(?P<key>[^/]+)/values/$",
+        OrganizationTraceItemAttributeValuesEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-attribute-values",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/attributes/ranked/$",
+        OrganizationTraceItemsAttributesRankedEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-attributes-ranked",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/metrics/$",
+        OrganizationTraceItemMetricsEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-metrics",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-items/stats/$",
+        OrganizationTraceItemStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-item-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/metrics-estimation-stats/$",
+        OrganizationOnDemandMetricsEstimationStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-metrics-estimation-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events-facets/$",
+        OrganizationEventsFacetsEndpoint.as_view(),
+        name="sentry-api-0-organization-events-facets",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/events-meta/$",
+        OrganizationEventsMetaEndpoint.as_view(),
+        name="sentry-api-0-organization-events-meta",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/metrics-compatibility/$",
+        OrganizationMetricsCompatibility.as_view(),
+        name="sentry-api-0-organization-metrics-compatibility",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/metrics-compatibility-sums/$",
+        OrganizationMetricsCompatibilitySums.as_view(),
+        name="sentry-api-0-organization-metrics-compatibility-sums",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/missing-members/$",
+        OrganizationMissingMembersEndpoint.as_view(),
+        name="sentry-api-0-organization-missing-members",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace/(?P<trace_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/$",
+        OrganizationTraceEndpoint.as_view(),
+        name="sentry-api-0-organization-trace",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-meta/(?P<trace_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/$",
+        OrganizationTraceMetaEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-meta",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/trace-logs/$",
+        OrganizationTraceLogsEndpoint.as_view(),
+        name="sentry-api-0-organization-trace-logs",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/measurements-meta/$",
+        OrganizationMeasurementsMeta.as_view(),
+        name="sentry-api-0-organization-measurements-meta",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issues/$",
+        OrganizationGroupIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-group-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issues-count/$",
+        OrganizationIssuesCountEndpoint.as_view(),
+        name="sentry-api-0-organization-issues-count",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issues-stats/$",
+        OrganizationGroupIndexStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-group-index-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issues-with-supergroups/$",
+        OrganizationIssuesWithSupergroupsEndpoint.as_view(),
+        name="sentry-api-0-organization-issues-with-supergroups",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issues-metrics/$",
+        OrganizationIssueMetricsEndpoint.as_view(),
+        name="sentry-api-0-organization-issue-metrics",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issues-timeseries/$",
+        OrganizationIssueTimeSeriesEndpoint.as_view(),
+        name="sentry-api-0-organization-issue-timeseries",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitoring-providers/$",
+        OrganizationMonitoringProviderIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-monitoring-providers",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitoring-providers/gcp/verify-connection/$",
+        OrganizationMonitoringProviderVerifyConnectionEndpoint.as_view(),
+        name="sentry-api-0-organization-monitoring-provider-gcp-verify-connection",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitoring-providers/(?P<provider_key>[^/]+)/$",
+        OrganizationMonitoringProviderDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-monitoring-provider-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/$",
+        OrganizationIntegrationsEndpoint.as_view(),
+        name="sentry-api-0-organization-integrations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/direct-enable/(?P<provider_key>[^/]+)/$",
+        OrganizationIntegrationDirectEnableEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-direct-enable",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/coding-agents/$",
+        OrganizationCodingAgentsEndpoint.as_view(),
+        name="sentry-api-0-organization-coding-agents",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/(?P<integration_id>[^/]+)/$",
+        OrganizationIntegrationDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/(?P<integration_id>[^/]+)/repos/$",
+        OrganizationIntegrationReposEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-repos",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/(?P<integration_id>[^/]+)/repo-sync/$",
+        OrganizationIntegrationRepoSyncEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-repo-sync",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/(?P<integration_id>[^/]+)/channels/$",
+        OrganizationIntegrationChannelsEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-channels",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/(?P<integration_id>[^/]+)/channel-validate/$",
+        OrganizationIntegrationChannelValidateEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-channel-validate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/(?P<integration_id>[^/]+)/issues/$",
+        OrganizationIntegrationIssuesEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-issues",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integrations/(?P<integration_id>[^/]+)/serverless-functions/$",
+        OrganizationIntegrationServerlessFunctionsEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-serverless-functions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/members/$",
+        OrganizationMemberIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-member-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/external-users/$",
+        ExternalUserEndpoint.as_view(),
+        name="sentry-api-0-organization-external-user",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/external-users/(?P<external_user_id>[^/]+)/$",
+        ExternalUserDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-external-user-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/pipeline/(?P<pipeline_name>[^/]+)/$",
+        OrganizationPipelineEndpoint.as_view(),
+        name="sentry-api-0-organization-pipeline",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/integration-requests/$",
+        OrganizationIntegrationRequestEndpoint.as_view(),
+        name="sentry-api-0-organization-integration-request",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/invite-requests/$",
+        OrganizationInviteRequestIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-invite-request-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/invite-requests/(?P<member_id>[^/]+)/$",
+        OrganizationInviteRequestDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-invite-request-detail",
+    ),
+    # Notification Actions
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notifications/actions/$",
+        NotificationActionsIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-notification-actions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notifications/actions/(?P<action_id>[^/]+)/$",
+        NotificationActionsDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-notification-actions-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notifications/available-actions/$",
+        NotificationActionsAvailableEndpoint.as_view(),
+        name="sentry-api-0-organization-notification-available-actions",
+    ),
+    # Monitors
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors/$",
+        OrganizationMonitorIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors-count/$",
+        OrganizationMonitorIndexCountEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-index-count",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors-stats/$",
+        OrganizationMonitorIndexStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-index-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/processing-errors/$",
+        OrganizationMonitorProcessingErrorsIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-processing-errors-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors-schedule-data/$",
+        OrganizationMonitorScheduleSampleDataEndpoint.as_view(),
+        name="sentry-api-0-organization-monitors-schedule-sample-data",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors-schedule-buckets/$",
+        OrganizationMonitorScheduleSampleBucketsEndpoint.as_view(),
+        name="sentry-api-0-organization-monitors-schedule-sample-buckets",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors-schedule-window/$",
+        OrganizationMonitorScheduleSampleWindowEndpoint.as_view(),
+        name="sentry-api-0-organization-monitors-schedule-sample-window",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/$",
+        OrganizationMonitorDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/environments/(?P<environment>[^/]+)/$",
+        OrganizationMonitorEnvironmentDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-environment-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/stats/$",
+        OrganizationMonitorStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/checkins/$",
+        OrganizationMonitorCheckInIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-monitor-check-in-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/group-search-views/$",
+        OrganizationGroupSearchViewsEndpoint.as_view(),
+        name="sentry-api-0-organization-group-search-views",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/group-search-views/starred/$",
+        OrganizationGroupSearchViewsStarredEndpoint.as_view(),
+        name="sentry-api-0-organization-group-search-views-starred",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/group-search-views/(?P<view_id>[^/]+)/$",
+        OrganizationGroupSearchViewDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-group-search-view-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/group-search-views/(?P<view_id>[^/]+)/visit/$",
+        OrganizationGroupSearchViewVisitEndpoint.as_view(),
+        name="sentry-api-0-organization-group-search-view-visit",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/group-search-views/(?P<view_id>[^/]+)/starred/$",
+        OrganizationGroupSearchViewDetailsStarredEndpoint.as_view(),
+        name="sentry-api-0-organization-group-search-view-starred",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/group-search-views/starred/order/$",
+        OrganizationGroupSearchViewStarredOrderEndpoint.as_view(),
+        name="sentry-api-0-organization-group-search-view-starred-order",
+    ),
+    # Pinned and saved search
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/recent-searches/$",
+        OrganizationRecentSearchesEndpoint.as_view(),
+        name="sentry-api-0-organization-recent-searches",
+    ),
+    # DSN Lookup
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/dsn-lookup/$",
+        DsnLookupEndpoint.as_view(),
+        name="sentry-api-0-organization-dsn-lookup",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sessions/$",
+        OrganizationSessionsEndpoint.as_view(),
+        name="sentry-api-0-organization-sessions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/resolved/$",
+        OrganizationIssuesResolvedInReleaseEndpoint.as_view(),
+        name="sentry-api-0-organization-release-resolved",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/members/(?P<member_id>[^/]+)/$",
+        OrganizationMemberDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-member-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/members/(?P<member_id>[^/]+)/teams/(?P<team_id_or_slug>[^/]+)/$",
+        OrganizationMemberTeamDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-member-team-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/onboarding-continuation-email/$",
+        OrganizationOnboardingContinuationEmail.as_view(),
+        name="sentry-api-0-organization-onboarding-continuation-email",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/projects/$",
+        OrganizationProjectsEndpoint.as_view(),
+        name="sentry-api-0-organization-projects",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/projects-count/$",
+        OrganizationProjectsCountEndpoint.as_view(),
+        name="sentry-api-0-organization-projects-count",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sent-first-event/$",
+        OrganizationProjectsSentFirstEventEndpoint.as_view(),
+        name="sentry-api-0-organization-sent-first-event",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/pull-requests/(?P<pull_request_id>[^/]+)/files/$",
+        OrganizationPullRequestFilesEndpoint.as_view(),
+        name="sentry-api-0-organization-pull-request-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/repos/pull-request-files/$",
+        OrganizationRepositoryPullRequestFilesEndpoint.as_view(),
+        name="sentry-api-0-organization-repository-pull-request-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/repos/$",
+        OrganizationRepositoriesEndpoint.as_view(),
+        name="sentry-api-0-organization-repositories",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/repos/settings/$",
+        OrganizationRepositorySettingsEndpoint.as_view(),
+        name="sentry-api-0-organization-repository-settings",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/repos/(?P<repo_id>[^/]+)/$",
+        OrganizationRepositoryDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-repository-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/repos/(?P<repo_id>[^/]+)/commits/$",
+        OrganizationRepositoryCommitsEndpoint.as_view(),
+        name="sentry-api-0-organization-repository-commits",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/repos/(?P<repo_id>[^/]+)/platforms/$",
+        OrganizationRepositoryPlatformsEndpoint.as_view(),
+        name="sentry-api-0-organization-repository-platforms",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/legacy-webhooks/$",
+        OrganizationLegacyWebhooksEndpoint.as_view(),
+        name="sentry-api-0-organization-legacy-webhooks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/$",
+        OrganizationReleasesEndpoint.as_view(),
+        name="sentry-api-0-organization-releases",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/release-thresholds/$",
+        ReleaseThresholdIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-release-thresholds",
+    ),
+    # TODO: also integrate release threshold status into the releases response?
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/release-threshold-statuses/$",
+        ReleaseThresholdStatusIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-release-threshold-statuses",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/stats/$",
+        OrganizationReleasesStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-releases-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/$",
+        OrganizationReleaseDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-release-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/meta/$",
+        OrganizationReleaseMetaEndpoint.as_view(),
+        name="sentry-api-0-organization-release-meta",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/assemble/$",
+        OrganizationReleaseAssembleEndpoint.as_view(),
+        name="sentry-api-0-organization-release-assemble",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/files/$",
+        OrganizationReleaseFilesEndpoint.as_view(),
+        name="sentry-api-0-organization-release-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/files/(?P<file_id>[^/]+)/$",
+        OrganizationReleaseFileDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-release-file-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/commitfiles/$",
+        CommitFileChangeEndpoint.as_view(),
+        name="sentry-api-0-release-commitfilechange",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/deploys/$",
+        ReleaseDeploysEndpoint.as_view(),
+        name="sentry-api-0-organization-release-deploys",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/commits/$",
+        OrganizationReleaseCommitsEndpoint.as_view(),
+        name="sentry-api-0-organization-release-commits",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/previous-with-commits/$",
+        OrganizationReleasePreviousCommitsEndpoint.as_view(),
+        name="sentry-api-0-organization-release-previous-with-commits",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/user-feedback/$",
+        OrganizationUserReportsEndpoint.as_view(),
+        name="sentry-api-0-organization-user-feedback",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/feedback-summary/$",
+        OrganizationFeedbackSummaryEndpoint.as_view(),
+        name="sentry-api-0-organization-user-feedback-summary",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/feedback-categories/$",
+        OrganizationFeedbackCategoriesEndpoint.as_view(),
+        name="sentry-api-0-organization-user-feedback-categories",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/user-teams/$",
+        OrganizationUserTeamsEndpoint.as_view(),
+        name="sentry-api-0-organization-user-teams",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/users/$",
+        OrganizationUsersEndpoint.as_view(),
+        name="sentry-api-0-organization-users",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/users/(?P<user_id>[^/]+)/$",
+        OrganizationUserDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-user-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sentry-app-installations/$",
+        SentryAppInstallationsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sentry-apps/$",
+        OrganizationSentryAppsEndpoint.as_view(),
+        name="sentry-api-0-organization-sentry-apps",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/inbox/$",
+        OrganizationInboxIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-inbox",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/inbox/count/$",
+        OrganizationInboxCountEndpoint.as_view(),
+        name="sentry-api-0-organization-inbox-count",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/inbox/(?P<item_id>\d+)/events/$",
+        OrganizationInboxItemEventsEndpoint.as_view(),
+        name="sentry-api-0-organization-inbox-item-events",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/investigations/$",
+        OrganizationInvestigationStartEndpoint.as_view(),
+        name="sentry-api-0-organization-investigations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/investigations/candidates/$",
+        OrganizationInvestigationCandidatesEndpoint.as_view(),
+        name="sentry-api-0-organization-investigation-candidates",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/investigations/(?P<notebook_id>[^/]+)/orchestration/$",
+        OrganizationInvestigationOrchestrationEndpoint.as_view(),
+        name="sentry-api-0-organization-investigation-orchestration",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/investigations/(?P<notebook_id>[^/]+)/orchestration/commands/$",
+        OrganizationInvestigationOrchestrationCommandsEndpoint.as_view(),
+        name="sentry-api-0-organization-investigation-orchestration-commands",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/$",
+        OrganizationNotebookIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-notebooks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/annotations/$",
+        OrganizationTimeseriesAnnotationEndpoint.as_view(),
+        name="sentry-api-0-organization-timeseries-annotations",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/$",
+        OrganizationNotebookDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/blocks/$",
+        OrganizationNotebookBlockIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-blocks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/blocks/order/$",
+        OrganizationNotebookBlockOrderEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-block-order",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/blocks/(?P<block_id>[^/]+)/$",
+        OrganizationNotebookBlockDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-block-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/blocks/(?P<block_id>[^/]+)/executions/$",
+        OrganizationNotebookBlockExecutionIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-block-executions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/blocks/(?P<block_id>[^/]+)/executions/(?P<execution_id>[^/]+)/$",
+        OrganizationNotebookBlockExecutionDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-block-execution-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/favorite/$",
+        OrganizationNotebookFavoriteEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-favorite",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/comments/$",
+        OrganizationNotebookCommentIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-comments",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/comment-counts/$",
+        OrganizationNotebookCommentCountsEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-comment-counts",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/comments/(?P<comment_id>[^/]+)/$",
+        OrganizationNotebookCommentDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-comment-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/duplicate/$",
+        OrganizationNotebookDuplicateEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-duplicate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/action-requests/(?P<action_request_id>[^/]+)/apply/$",
+        OrganizationNotebookActionRequestApplyEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-action-request-apply",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/action-requests/(?P<action_request_id>[^/]+)/recheck/$",
+        OrganizationNotebookActionRequestRecheckEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-action-request-recheck",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/action-requests/(?P<action_request_id>[^/]+)/retry-follow-up/$",
+        OrganizationNotebookActionRequestRetryFollowUpEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-action-request-retry-follow-up",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/presence/$",
+        OrganizationNotebookPresenceEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-presence",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/notebooks/(?P<notebook_id>[^/]+)/title-generation/$",
+        OrganizationNotebookTitleGenerationEndpoint.as_view(),
+        name="sentry-api-0-organization-notebook-title-generation",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/issue-view-title/generate/$",
+        IssueViewTitleGenerateEndpoint.as_view(),
+        name="sentry-api-0-issue-view-title-generate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/search-agent/translate/$",
+        SearchAgentTranslateEndpoint.as_view(),
+        name="sentry-api-0-search-agent-translate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/search-agent/start/$",
+        SearchAgentStartEndpoint.as_view(),
+        name="sentry-api-0-search-agent-start",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/search-agent/state/(?P<run_id>[^/]+)/$",
+        SearchAgentStateEndpoint.as_view(),
+        name="sentry-api-0-search-agent-state",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/explorer-chat/$",
+        OrganizationSeerAgentChatEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-explorer-chat",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/explorer-chat/(?P<run_id>[^/]+)/$",
+        OrganizationSeerAgentChatEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-explorer-chat-run-id",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/chat-suggestions/$",
+        OrganizationSeerChatSuggestionsEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-chat-suggestions",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/nav-links/$",
+        OrganizationSeerNavLinksEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-nav-links",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/autofix-overview/$",
+        OrganizationSeerAutofixOverviewEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-autofix-overview",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/autofix-scm-info/$",
+        OrganizationSeerAutofixScmInfoEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-autofix-scm-info",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/repo-access/$",
+        OrganizationSeerRepoAccessEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-repo-access",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/runs/$",
+        OrganizationSeerRunsEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-runs",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/workflows/configs/$",
+        OrganizationSeerWorkflowConfigsEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-workflow-configs",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/workflows/configs/(?P<config_id>[^/]+)/$",
+        OrganizationSeerWorkflowConfigDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-workflow-config-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/workflows/runs/$",
+        OrganizationSeerWorkflowRunsEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-workflow-runs",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/explorer-update/(?P<run_id>[^/]+)/$",
+        OrganizationSeerAgentUpdateEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-explorer-update",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/supergroups/by-group/$",
+        OrganizationSupergroupsByGroupEndpoint.as_view(),
+        name="sentry-api-0-organization-supergroups-by-group",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/supergroups/(?P<supergroup_id>[^/]+)/$",
+        OrganizationSupergroupDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-supergroup-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/setup-check/$",
+        OrganizationSeerSetupCheckEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-setup-check",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/credit-check/$",
+        OrganizationSeerCreditCheckEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-credit-check",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/monitoring-connections/$",
+        OrganizationSeerMonitoringConnectionsEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-monitoring-connections",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/monitoring-identities/(?P<identity_id>\d+)/token/$",
+        OrganizationSeerMonitoringIdentityTokenEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-monitoring-identity-token",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/monitoring-integrations/(?P<integration_id>\d+)/token/$",
+        OrganizationSeerMonitoringIntegrationTokenEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-monitoring-integration-token",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/onboarding-check/$",
+        OrganizationSeerOnboardingCheck.as_view(),
+        name="sentry-api-0-organization-seer-onboarding-check",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer/projects/$",
+        OrganizationSeerProjectSettingsEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-project-settings",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/seer-rpc/(?P<method_name>\w+)/$",
+        OrganizationSeerRpcEndpoint.as_view(),
+        name="sentry-api-0-organization-seer-rpc",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/sentry-app-components/$",
+        OrganizationSentryAppComponentsEndpoint.as_view(),
+        name="sentry-api-0-organization-sentry-app-components",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/org-auth-tokens/$",
+        OrganizationAuthTokensEndpoint.as_view(),
+        name="sentry-api-0-org-auth-tokens",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/org-auth-tokens/(?P<token_id>[^/]+)/$",
+        OrganizationAuthTokenDetailsEndpoint.as_view(),
+        name="sentry-api-0-org-auth-token-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/stats/$",
+        OrganizationStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/stats_v2/$",
+        OrganizationStatsEndpointV2.as_view(),
+        name="sentry-api-0-organization-stats-v2",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/stats-summary/$",
+        OrganizationStatsSummaryEndpoint.as_view(),
+        name="sentry-api-0-organization-stats-summary",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/teams/$",
+        OrganizationTeamsEndpoint.as_view(),
+        name="sentry-api-0-organization-teams",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/tags/$",
+        OrganizationTagsEndpoint.as_view(),
+        name="sentry-api-0-organization-tags",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/tags/(?P<key>[^/]+)/values/$",
+        OrganizationTagKeyValuesEndpoint.as_view(),
+        name="sentry-api-0-organization-tagkey-values",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/onboarding-tasks/$",
+        OrganizationOnboardingTaskEndpoint.as_view(),
+        name="sentry-api-0-organization-onboardingtasks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/agent-handoff/prompts/$",
+        OrganizationAgentHandoffEndpoint.as_view(),
+        name="sentry-api-0-organization-agent-handoff",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/onboarding/agent/runs/$",
+        OrganizationAgenticOnboardingRunIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-agentic-onboarding-run-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/onboarding/agent/runs/(?P<run_id>[a-f0-9]{32})/$",
+        OrganizationAgenticOnboardingRunDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-agentic-onboarding-run-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/onboarding/agent/status/$",
+        OrganizationAgenticOnboardingStatusEndpoint.as_view(),
+        name="sentry-api-0-organization-agentic-onboarding-status",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/environments/$",
+        OrganizationEnvironmentsEndpoint.as_view(),
+        name="sentry-api-0-organization-environments",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/broadcasts/$",
+        BroadcastIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-broadcasts",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/join-request/$",
+        OrganizationJoinRequestEndpoint.as_view(),
+        name="sentry-api-0-organization-join-request",
+    ),
+    # relay usage
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/relay_usage/$",
+        OrganizationRelayUsage.as_view(),
+        name="sentry-api-0-organization-relay-usage",
+    ),
+    # Flags
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/flags/logs/$",
+        OrganizationFlagLogIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-flag-logs",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/flags/logs/(?P<flag_log_id>\d+)/$",
+        OrganizationFlagLogDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-flag-log",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/flags/hooks/provider/(?P<provider>[\w-]+)/$",
+        OrganizationFlagsHooksEndpoint.as_view(),
+        name="sentry-api-0-organization-flag-hooks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/flags/signing-secrets/$",
+        OrganizationFlagsWebHookSigningSecretsEndpoint.as_view(),
+        name="sentry-api-0-organization-flag-hooks-signing-secrets",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/flags/signing-secrets/(?P<signing_secret_id>\d+)/$",
+        OrganizationFlagsWebHookSigningSecretEndpoint.as_view(),
+        name="sentry-api-0-organization-flag-hooks-signing-secret",
+    ),
+    # Replays
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/replays/$",
+        OrganizationReplayIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-replay-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/replay-selectors/$",
+        OrganizationReplaySelectorIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-replay-selectors-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/replay-count/$",
+        OrganizationReplayCountEndpoint.as_view(),
+        name="sentry-api-0-organization-replay-count",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/$",
+        OrganizationReplayDetailsEndpoint.as_view(),
+        name="sentry-api-0-organization-replay-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/replays-events-meta/$",
+        OrganizationReplayEventsMetaEndpoint.as_view(),
+        name="sentry-api-0-organization-replay-events-meta",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/request-project-creation/$",
+        OrganizationRequestProjectCreation.as_view(),
+        name="sentry-api-0-organization-request-project-creation",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/scim/v2/",
+        include(
+            [
+                re_path(
+                    r"^Users$",
+                    OrganizationSCIMMemberIndex.as_view(),
+                    name="sentry-api-0-organization-scim-member-index",
+                ),
+                re_path(
+                    r"^Users/(?P<member_id>\d+)$",
+                    OrganizationSCIMMemberDetails.as_view(),
+                    name="sentry-api-0-organization-scim-member-details",
+                ),
+                re_path(
+                    r"^Groups$",
+                    OrganizationSCIMTeamIndex.as_view(),
+                    name="sentry-api-0-organization-scim-team-index",
+                ),
+                re_path(
+                    r"^Groups/(?P<team_id_or_slug>\d+)$",
+                    OrganizationSCIMTeamDetails.as_view(),
+                    name="sentry-api-0-organization-scim-team-details",
+                ),
+                re_path(
+                    r"^Schemas$",
+                    OrganizationSCIMSchemaIndex.as_view(),
+                    name="sentry-api-0-organization-scim-schema-index",
+                ),
+                # .+ rather than [^/]+ so unknown URIs containing slashes
+                # still reach the endpoint and get a SCIM-format 404.
+                re_path(
+                    r"^Schemas/(?P<schema_uri>.+)$",
+                    OrganizationSCIMSchemaDetails.as_view(),
+                    name="sentry-api-0-organization-scim-schema-details",
+                ),
+                re_path(
+                    r"^ServiceProviderConfig$",
+                    OrganizationSCIMServiceProviderConfig.as_view(),
+                    name="sentry-api-0-organization-scim-service-provider-config",
+                ),
+                re_path(
+                    r"^ResourceTypes$",
+                    OrganizationSCIMResourceTypeIndex.as_view(),
+                    name="sentry-api-0-organization-scim-resource-type-index",
+                ),
+                re_path(
+                    r"^ResourceTypes/(?P<resource_type_name>.+)$",
+                    OrganizationSCIMResourceTypeDetails.as_view(),
+                    name="sentry-api-0-organization-scim-resource-type-details",
+                ),
+            ]
+        ),
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/metrics/data/$",
+        OrganizationReleaseHealthDataEndpoint.as_view(),
+        name="sentry-api-0-organization-metrics-data",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/profiling/",
+        include(
+            [
+                re_path(
+                    r"^flamegraph/$",
+                    OrganizationProfilingFlamegraphEndpoint.as_view(),
+                    name="sentry-api-0-organization-profiling-flamegraph",
+                ),
+                re_path(
+                    r"^function-trends/$",
+                    OrganizationProfilingFunctionTrendsEndpoint.as_view(),
+                    name="sentry-api-0-organization-profiling-function-trends",
+                ),
+                re_path(
+                    r"^chunks/$",
+                    OrganizationProfilingChunksEndpoint.as_view(),
+                    name="sentry-api-0-organization-profiling-chunks",
+                ),
+                re_path(
+                    r"^chunk-attachments/$",
+                    OrganizationProfilingChunkAttachmentsEndpoint.as_view(),
+                    name="sentry-api-0-organization-profiling-chunk-attachments",
+                ),
+                re_path(
+                    r"^has-chunks/$",
+                    OrganizationProfilingHasChunksEndpoint.as_view(),
+                    name="sentry-api-0-organization-profiling-has-chunks",
+                ),
+            ],
+        ),
+    ),
+    # Symbolicator Builtin Sources
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/builtin-symbol-sources/$",
+        BuiltinSymbolSourcesEndpoint.as_view(),
+        name="sentry-api-0-organization-builtin-symbol-sources",
+    ),
+    # Unsubscribe from organization notifications
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/unsubscribe/project/(?P<id>\d+)/$",
+        OrganizationUnsubscribeProject.as_view(),
+        name="sentry-api-0-organization-unsubscribe-project",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/unsubscribe/issue/(?P<id>\d+)/$",
+        OrganizationUnsubscribeIssue.as_view(),
+        name="sentry-api-0-organization-unsubscribe-issue",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/prompts-activity/$",
+        PromptsActivityEndpoint.as_view(),
+        name="sentry-api-0-organization-prompts-activity",
+    ),
+    # Trigger relocation
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/fork/$",
+        OrganizationForkEndpoint.as_view(),
+        name="sentry-api-0-organization-fork",
+    ),
+    # Uptime
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/uptime/$",
+        OrganizationUptimeAlertIndexEndpoint.as_view(),
+        name="sentry-api-0-organization-uptime-alert-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/uptime-preview-check/$",
+        OrganizationUptimeAlertPreviewCheckEndpoint.as_view(),
+        name="sentry-api-0-organization-uptime-alert-preview-check",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/uptime-count/$",
+        OrganizationUptimeAlertIndexCountEndpoint.as_view(),
+        name="sentry-api-0-organization-uptime-alert-index-count",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/uptime-stats/$",
+        OrganizationUptimeStatsEndpoint.as_view(),
+        name="sentry-api-0-organization-uptime-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/uptime-summary/$",
+        OrganizationUptimeSummaryEndpoint.as_view(),
+        name="sentry-api-0-organization-uptime-summary",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/insights/tree/$",
+        OrganizationInsightsTreeEndpoint.as_view(),
+        name="sentry-api-0-organization-insights-tree",
+    ),
+    *workflow_urls.organization_urlpatterns,
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/conduit-demo/$",
+        OrganizationConduitDemoEndpoint.as_view(),
+        name="sentry-api-0-organization-conduit-demo",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/objectstore/(?P<path>.*)$",
+        ObjectstoreEndpoint.as_view(),
+        name="sentry-api-0-organization-objectstore",
+    ),
+    *preprod_urls.preprod_organization_urlpatterns,
+]
+
+PROJECT_URLS: list[URLPattern | URLResolver] = [
+    re_path(
+        r"^$",
+        ProjectIndexEndpoint.as_view(),
+        name="sentry-api-0-projects",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/$",
+        ProjectDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/create-sample/$",
+        ProjectCreateSampleEndpoint.as_view(),
+        name="sentry-api-0-project-create-sample",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/environments/$",
+        ProjectEnvironmentsEndpoint.as_view(),
+        name="sentry-api-0-project-environments",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/environments/(?P<environment>[^/]+)/$",
+        ProjectEnvironmentDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-environment-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/trace-items/(?P<item_id>(?:[A-Fa-f0-9]+))/$",
+        ProjectTraceItemDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-trace-item-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/$",
+        ProjectEventsEndpoint.as_view(),
+        name="sentry-api-0-project-events",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>(?:\d+|[A-Fa-f0-9]{32}))/$",
+        ProjectEventDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-event-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/grouping-info/$",
+        EventGroupingInfoEndpoint.as_view(),
+        name="sentry-api-0-event-grouping-info",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/apple-crash-report$",
+        EventAppleCrashReportEndpoint.as_view(),
+        name="sentry-api-0-event-apple-crash-report",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/attachments/$",
+        EventAttachmentsEndpoint.as_view(),
+        name="sentry-api-0-event-attachments",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/reprocessable/$",
+        EventReprocessableEndpoint.as_view(),
+        name="sentry-api-0-event-reprocessable",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/attachments/(?P<attachment_id>[^/]+)/$",
+        EventAttachmentDetailsEndpoint.as_view(),
+        name="sentry-api-0-event-attachment-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/committers/$",
+        EventFileCommittersEndpoint.as_view(),
+        name="sentry-api-0-event-file-committers",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/json/$",
+        EventJsonEndpoint.as_view(),
+        name="sentry-api-0-event-json",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/owners/$",
+        EventOwnersEndpoint.as_view(),
+        name="sentry-api-0-event-owners",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/source-map-debug/$",
+        SourceMapDebugEndpoint.as_view(),
+        name="sentry-api-0-event-source-map-debug",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/events/(?P<event_id>[^/]+)/actionable-items/$",
+        ActionableItemsEndpoint.as_view(),
+        name="sentry-api-0-event-actionable-items",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/ai/code-explanation/$",
+        ProjectCodeExplanationEndpoint.as_view(),
+        name="sentry-api-0-project-code-explanation",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/files/dsyms/$",
+        DebugFilesEndpoint.as_view(),
+        name="sentry-api-0-dsym-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/files/source-maps/$",
+        SourceMapsEndpoint.as_view(),
+        name="sentry-api-0-source-maps",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/files/artifact-bundles/$",
+        ArtifactBundlesEndpoint.as_view(),
+        name="sentry-api-0-artifact-bundles",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/files/proguard-artifact-releases",
+        ProguardArtifactReleasesEndpoint.as_view(),
+        name="sentry-api-0-proguard-artifact-releases",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/files/difs/assemble/$",
+        DifAssembleEndpoint.as_view(),
+        name="sentry-api-0-assemble-dif-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/files/dsyms/unknown/$",
+        UnknownDebugFilesEndpoint.as_view(),
+        name="sentry-api-0-unknown-dsym-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/files/dsyms/associate/$",
+        AssociateDSymFilesEndpoint.as_view(),
+        name="sentry-api-0-associate-dsym-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/filters/$",
+        ProjectFiltersEndpoint.as_view(),
+        name="sentry-api-0-project-filters",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/filters/(?P<filter_id>[^/]+)/$",
+        ProjectFilterDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-filters-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/custom-inbound-filters/$",
+        CustomInboundFiltersEndpoint.as_view(),
+        name="sentry-api-0-project-custom-inbound-filters",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/custom-inbound-filters/validate/$",
+        CustomInboundFilterValidateEndpoint.as_view(),
+        name="sentry-api-0-project-custom-inbound-filter-validate",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/custom-inbound-filters/(?P<filter_id>[^/]+)/$",
+        CustomInboundFilterDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-custom-inbound-filter-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/hooks/$",
+        ProjectServiceHooksEndpoint.as_view(),
+        name="sentry-api-0-service-hooks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/hooks/(?P<hook_id>[^/]+)/$",
+        ProjectServiceHookDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-service-hook-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/(?:issues|groups)/$",
+        ProjectGroupIndexEndpoint.as_view(),
+        name="sentry-api-0-project-group-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/(?:issues|groups)/stats/$",
+        ProjectGroupStatsEndpoint.as_view(),
+        name="sentry-api-0-project-group-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/keys/$",
+        ProjectKeysEndpoint.as_view(),
+        name="sentry-api-0-project-keys",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/keys/(?P<key_id>[^/]+)/$",
+        ProjectKeyDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-key-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/keys/(?P<key_id>[^/]+)/stats/$",
+        ProjectKeyStatsEndpoint.as_view(),
+        name="sentry-api-0-project-key-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/members/$",
+        ProjectMemberIndexEndpoint.as_view(),
+        name="sentry-api-0-project-member-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/overview/$",
+        ProjectOverviewEndpoint.as_view(),
+        name="sentry-api-0-project-overview",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/$",
+        ProjectReleasesEndpoint.as_view(),
+        name="sentry-api-0-project-releases",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/release-thresholds/$",
+        ReleaseThresholdEndpoint.as_view(),
+        name="sentry-api-0-project-release-thresholds",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/release-thresholds/(?P<release_threshold>[^/]+)/$",
+        ReleaseThresholdDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-release-thresholds-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/commits/$",
+        ProjectCommitsEndpoint.as_view(),
+        name="sentry-api-0-project-commits",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/token/$",
+        ProjectReleasesTokenEndpoint.as_view(),
+        name="sentry-api-0-project-releases-token",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/completion/$",
+        ProjectReleaseSetupCompletionEndpoint.as_view(),
+        name="sentry-api-0-project-releases-completion-status",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/$",
+        ProjectReleaseDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-release-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/commits/$",
+        ProjectReleaseCommitsEndpoint.as_view(),
+        name="sentry-api-0-project-release-commits",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/repositories/$",
+        ProjectReleaseRepositories.as_view(),
+        name="sentry-api-0-project-release-repositories",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/resolved/$",
+        ProjectIssuesResolvedInReleaseEndpoint.as_view(),
+        name="sentry-api-0-project-release-resolved",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/stats/$",
+        ProjectReleaseStatsEndpoint.as_view(),
+        name="sentry-api-0-project-release-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/artifact-bundles/(?P<bundle_id>[^/]+)/files/$",
+        ProjectArtifactBundleFilesEndpoint.as_view(),
+        name="sentry-api-0-project-artifact-bundle-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/artifact-bundles/(?P<bundle_id>[^/]+)/files/(?P<file_id>[^/]+)/$",
+        ProjectArtifactBundleFileDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-artifact-bundle-file-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/files/$",
+        ProjectReleaseFilesEndpoint.as_view(),
+        name="sentry-api-0-project-release-files",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/releases/(?P<version>[^/]+)/files/(?P<file_id>[^/]+)/$",
+        ProjectReleaseFileDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-release-file-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/artifact-lookup/$",
+        ProjectArtifactLookupEndpoint.as_view(),
+        name="sentry-api-0-project-artifact-lookup",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/$",
+        ProjectReplayDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-replay-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/viewed-by/$",
+        ProjectReplayViewedByEndpoint.as_view(),
+        name="sentry-api-0-project-replay-viewed-by",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/clicks/$",
+        ProjectReplayClicksIndexEndpoint.as_view(),
+        name="sentry-api-0-project-replay-clicks-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/recording-segments/$",
+        ProjectReplayRecordingSegmentIndexEndpoint.as_view(),
+        name="sentry-api-0-project-replay-recording-segment-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/summarize/$",
+        ProjectReplaySummaryEndpoint.as_view(),
+        name="sentry-api-0-project-replay-summary",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/recording-segments/(?P<segment_id>\d+)/$",
+        ProjectReplayRecordingSegmentDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-replay-recording-segment-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/(?P<replay_id>[^/]+)/videos/(?P<segment_id>\d+)/$",
+        ProjectReplayVideoDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-replay-video-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/jobs/delete/$",
+        ProjectReplayDeletionJobsIndexEndpoint.as_view(),
+        name="sentry-api-0-project-replay-deletion-jobs-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/replays/jobs/delete/(?P<job_id>\d+)/$",
+        ProjectReplayDeletionJobDetailEndpoint.as_view(),
+        name="sentry-api-0-project-replay-deletion-job-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/stats/$",
+        ProjectStatsEndpoint.as_view(),
+        name="sentry-api-0-project-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/symbol-sources/$",
+        ProjectSymbolSourcesEndpoint.as_view(),
+        name="sentry-api-0-project-symbol-sources",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/tags/$",
+        ProjectTagsEndpoint.as_view(),
+        name="sentry-api-0-project-tags",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/tags/(?P<key>[^/]+)/$",
+        ProjectTagKeyDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-tagkey-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/tags/(?P<key>[^/]+)/values/$",
+        ProjectTagKeyValuesEndpoint.as_view(),
+        name="sentry-api-0-project-tagkey-values",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/teams/$",
+        ProjectTeamsEndpoint.as_view(),
+        name="sentry-api-0-project-teams",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/teams/(?P<team_id_or_slug>[^/]+)/$",
+        ProjectTeamDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-team-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/transfer/$",
+        ProjectTransferEndpoint.as_view(),
+        name="sentry-api-0-project-transfer",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/users/$",
+        ProjectUsersEndpoint.as_view(),
+        name="sentry-api-0-project-users",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/(?:user-feedback|user-reports)/$",
+        ProjectUserReportsEndpoint.as_view(),
+        name="sentry-api-0-project-user-reports",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/reprocessing/$",
+        ProjectReprocessingEndpoint.as_view(),
+        name="sentry-api-0-project-reprocessing",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/ownership/$",
+        ProjectOwnershipEndpoint.as_view(),
+        name="sentry-api-0-project-ownership",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/codeowners/$",
+        ProjectCodeOwnersEndpoint.as_view(),
+        name="sentry-api-0-project-codeowners",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/codeowners/(?P<codeowners_id>[^/]+)/$",
+        ProjectCodeOwnersDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-codeowners-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/transaction-threshold/configure/$",
+        ProjectTransactionThresholdEndpoint.as_view(),
+        name="sentry-api-0-project-transaction-threshold",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/performance-issues/configure/$",
+        ProjectPerformanceIssueSettingsEndpoint.as_view(),
+        name="sentry-api-0-project-performance-issue-settings",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/performance/configure/$",
+        ProjectPerformanceGeneralSettingsEndpoint.as_view(),
+        name="sentry-api-0-project-performance-general-settings",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/legacy-webhooks/$",
+        ProjectLegacyWebhooksEndpoint.as_view(),
+        name="sentry-api-0-project-legacy-webhooks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/cluster-transaction-names/$",
+        ProjectTransactionNamesCluster.as_view(),
+        name="sentry-api-0-organization-project-cluster-transaction-names",
+    ),
+    # Tombstone
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/tombstones/$",
+        GroupTombstoneEndpoint.as_view(),
+        name="sentry-api-0-group-tombstones",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/tombstones/(?P<tombstone_id>\d+)/$",
+        GroupTombstoneDetailsEndpoint.as_view(),
+        name="sentry-api-0-group-tombstone-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/stacktrace-link/$",
+        ProjectStacktraceLinkEndpoint.as_view(),
+        name="sentry-api-0-project-stacktrace-link",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/code-mapping-prefixes/stack/$",
+        ProjectCodeMappingStackPrefixesEndpoint.as_view(),
+        name="sentry-api-0-project-code-mapping-stack-prefixes",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/stacktrace-source-context/$",
+        ProjectStacktraceSourceContextEndpoint.as_view(),
+        name="sentry-api-0-project-stacktrace-source-context",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/repo/$",
+        ProjectRepoEndpoint.as_view(),
+        name="sentry-api-0-project-repo",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/repo-path-parsing/$",
+        ProjectRepoPathParsingEndpoint.as_view(),
+        name="sentry-api-0-project-repo-path-parsing",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/profiling/profiles/(?P<profile_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/$",
+        ProjectProfilingProfileEndpoint.as_view(),
+        name="sentry-api-0-project-profiling-profile",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/profiling/raw_profiles/(?P<profile_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/$",
+        ProjectProfilingRawProfileEndpoint.as_view(),
+        name="sentry-api-0-project-profiling-raw-profile",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/profiling/raw_chunks/(?P<profiler_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/(?P<chunk_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/$",
+        ProjectProfilingRawChunkEndpoint.as_view(),
+        name="sentry-api-0-project-profiling-raw-chunk",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/profiling/chunks/(?P<profiler_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/(?P<chunk_id>(?:\d+|[A-Fa-f0-9-]{32,36}))/attachments/(?P<attachment_id>\d+)/$",
+        ProjectProfilingChunkAttachmentEndpoint.as_view(),
+        name="sentry-api-0-project-profiling-chunk-attachment",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/statistical-detector/$",
+        ProjectStatisticalDetectors.as_view(),
+        name="sentry-api-0-project-statistical-detector",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/$",
+        ProjectMonitorDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-monitor-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/checkins/$",
+        ProjectMonitorCheckInIndexEndpoint.as_view(),
+        name="sentry-api-0-project-monitor-check-in-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/environments/(?P<environment>[^/]+)/$",
+        ProjectMonitorEnvironmentDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-monitor-environment-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/processing-errors/(?P<uuid>[^/]+)/$",
+        ProjectProcessingErrorsDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-processing-errors-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/processing-errors/$",
+        ProjectProcessingErrorsIndexEndpoint.as_view(),
+        name="sentry-api-0-project-processing-errors-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/processing-errors/$",
+        ProjectMonitorProcessingErrorsIndexEndpoint.as_view(),
+        name="sentry-api-0-project-monitor-processing-errors-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/monitors/(?P<monitor_id_or_slug>[^/]+)/stats/$",
+        ProjectMonitorStatsEndpoint.as_view(),
+        name="sentry-api-0-project-monitor-stats",
+    ),
+    # Uptime
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/uptime/$",
+        ProjectUptimeAlertIndexEndpoint.as_view(),
+        name="sentry-api-0-project-uptime-alert-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/uptime/(?P<uptime_detector_id>[^/]+)/$",
+        ProjectUptimeAlertDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-uptime-alert-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/uptime/(?P<uptime_detector_id>[^/]+)/checks/$",
+        ProjectUptimeAlertCheckIndexEndpoint.as_view(),
+        name="sentry-api-0-project-uptime-alert-checks",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/uptime/(?P<uptime_detector_id>[^/]+)/response-captures/(?P<capture_id>[^/]+)/$",
+        ProjectUptimeResponseCaptureEndpoint.as_view(),
+        name="sentry-api-0-project-uptime-response-capture",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/uptime/(?P<uptime_detector_id>[^/]+)/response-captures/$",
+        ProjectUptimeResponseCapturesIndexEndpoint.as_view(),
+        name="sentry-api-0-project-uptime-response-captures-index",
+    ),
+    # Tempest
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/tempest-credentials/$",
+        TempestCredentialsEndpoint.as_view(),
+        name="sentry-api-0-project-tempest-credentials",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/tempest-credentials/(?P<tempest_credentials_id>\d+)/$",
+        TempestCredentialsDetailsEndpoint.as_view(),
+        name="sentry-api-0-project-tempest-credentials-details",
+    ),
+    # Seer
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/seer/settings/$",
+        ProjectSeerSettingsEndpoint.as_view(),
+        name="sentry-api-0-project-seer-settings",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/seer/preferences/$",
+        ProjectSeerPreferencesEndpoint.as_view(),
+        name="sentry-api-0-project-seer-preferences",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/seer/repos/$",
+        ProjectSeerReposEndpoint.as_view(),
+        name="sentry-api-0-project-seer-repos",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/seer/repos/(?P<repo_id>\d+)/$",
+        ProjectSeerRepoEndpoint.as_view(),
+        name="sentry-api-0-project-seer-repo",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/seer/night-shift/$",
+        ProjectSeerAgenticTriageEndpoint.as_view(),
+        name="sentry-api-0-project-seer-night-shift",
+    ),
+    # User Issue
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<project_id_or_slug>[^/]+)/user-issue/$",
+        ProjectUserIssueEndpoint.as_view(),
+        name="sentry-api-0-project-user-issue",
+    ),
+    *preprod_urls.preprod_project_urlpatterns,
+]
+
+TEAM_URLS = [
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/$",
+        TeamDetailsEndpoint.as_view(),
+        name="sentry-api-0-team-details",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/issues/old/$",
+        TeamGroupsOldEndpoint.as_view(),
+        name="sentry-api-0-team-oldest-issues",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/release-count/$",
+        TeamReleaseCountEndpoint.as_view(),
+        name="sentry-api-0-team-release-count",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/time-to-resolution/$",
+        TeamTimeToResolutionEndpoint.as_view(),
+        name="sentry-api-0-team-time-to-resolution",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/unresolved-issue-age/$",
+        TeamUnresolvedIssueAgeEndpoint.as_view(),
+        name="sentry-api-0-team-unresolved-issue-age",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/issue-breakdown/$",
+        TeamIssueBreakdownEndpoint.as_view(),
+        name="sentry-api-0-team-issue-breakdown",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/all-unresolved-issues/$",
+        TeamAllUnresolvedIssuesEndpoint.as_view(),
+        name="sentry-api-0-team-all-unresolved-issues",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/members/$",
+        TeamMembersEndpoint.as_view(),
+        name="sentry-api-0-team-members",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/projects/$",
+        TeamProjectsEndpoint.as_view(),
+        name="sentry-api-0-team-project-index",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/stats/$",
+        TeamStatsEndpoint.as_view(),
+        name="sentry-api-0-team-stats",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/avatar/$",
+        TeamAvatarEndpoint.as_view(),
+        name="sentry-api-0-team-avatar",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/external-teams/$",
+        ExternalTeamEndpoint.as_view(),
+        name="sentry-api-0-external-team",
+    ),
+    re_path(
+        r"^(?P<organization_id_or_slug>[^/]+)/(?P<team_id_or_slug>[^/]+)/external-teams/(?P<external_team_id>[^/]+)/$",
+        ExternalTeamDetailsEndpoint.as_view(),
+        name="sentry-api-0-external-team-details",
+    ),
+]
+
+SENTRY_APP_URLS = [
+    re_path(
+        r"^$",
+        SentryAppsEndpoint.as_view(),
+        name="sentry-api-0-sentry-apps",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/$",
+        SentryAppDetailsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-details",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/features/$",
+        SentryAppFeaturesEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-features",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/components/$",
+        SentryAppComponentsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-components",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/avatar/$",
+        SentryAppAvatarEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-avatar",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/api-tokens/$",
+        SentryInternalAppTokensEndpoint.as_view(),
+        name="sentry-api-0-sentry-internal-app-tokens",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/api-tokens/(?P<api_token_id>[^/]+)/$",
+        SentryInternalAppTokenDetailsEndpoint.as_view(),
+        name="sentry-api-0-sentry-internal-app-token-details",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/rotate-secret/$",
+        SentryAppRotateSecretEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-rotate-secret",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/stats/$",
+        SentryAppStatsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-stats",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/publish-request/$",
+        SentryAppPublishRequestEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-publish-request",
+    ),
+    re_path(
+        r"^(?P<sentry_app_id_or_slug>[^/]+)/webhook-requests/$",
+        SentryAppWebhookRequestsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-webhook-requests",
+    ),
+]
+
+SENTRY_APP_INSTALLATION_URLS = [
+    re_path(
+        r"^(?P<uuid>[^/]+)/$",
+        SentryAppInstallationDetailsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installation-details",
+    ),
+    re_path(
+        r"^(?P<uuid>[^/]+)/authorizations/$",
+        SentryAppAuthorizationsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installation-authorizations",
+    ),
+    re_path(
+        r"^(?P<uuid>[^/]+)/external-requests/$",
+        SentryAppInstallationExternalRequestsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installation-external-requests",
+    ),
+    re_path(
+        r"^(?P<uuid>[^/]+)/external-issue-actions/$",
+        SentryAppInstallationExternalIssueActionsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installation-external-issue-actions",
+    ),
+    re_path(
+        r"^(?P<uuid>[^/]+)/external-issues/$",
+        SentryAppInstallationExternalIssuesEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installation-external-issues",
+    ),
+    re_path(
+        r"^(?P<uuid>[^/]+)/external-issues/(?P<external_issue_id>[^/]+)/$",
+        SentryAppInstallationExternalIssueDetailsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installation-external-issue-details",
+    ),
+    re_path(
+        r"^(?P<uuid>[^/]+)/service-hook-projects/$",
+        SentryAppInstallationServiceHookProjectsEndpoint.as_view(),
+        name="sentry-api-0-sentry-app-installation-service-hook-projects",
+    ),
+]
+
+INTERNAL_URLS = [
+    re_path(
+        r"^health/$",
+        SystemHealthEndpoint.as_view(),
+        name="sentry-api-0-system-health",
+    ),
+    re_path(
+        r"^options/$",
+        SystemOptionsEndpoint.as_view(),
+        name="sentry-api-0-system-options",
+    ),
+    re_path(
+        r"^beacon/$",
+        InternalBeaconEndpoint.as_view(),
+        name="sentry-api-0-internal-beacon",
+    ),
+    re_path(
+        r"^frontend-version/$",
+        FrontendVersionEndpoint.as_view(),
+        name="sentry-api-0-internal-frontend-version",
+    ),
+    re_path(
+        r"^warnings/$",
+        InternalWarningsEndpoint.as_view(),
+        name="sentry-api-0-internal-warnings",
+    ),
+    re_path(
+        r"^packages/$",
+        InternalPackagesEndpoint.as_view(),
+        name="sentry-api-0-internal-packages",
+    ),
+    re_path(
+        r"^environment/$",
+        InternalEnvironmentEndpoint.as_view(),
+        name="sentry-api-0-internal-environment",
+    ),
+    re_path(
+        r"^mail/$",
+        InternalMailEndpoint.as_view(),
+        name="sentry-api-0-internal-mail",
+    ),
+    re_path(
+        r"^project-config/$",
+        AdminRelayProjectConfigsEndpoint.as_view(),
+        name="sentry-api-0-internal-project-config",
+    ),
+    re_path(
+        # If modifying, ensure PROXY_BASE_PATH is updated as well
+        r"^integration-proxy/$",
+        InternalIntegrationProxyEndpoint.as_view(),
+        name="sentry-api-0-internal-integration-proxy",
+    ),
+    re_path(
+        r"^rpc/(?P<service_name>\w+)/(?P<method_name>\w+)/$",
+        InternalRpcServiceEndpoint.as_view(),
+        name="sentry-api-0-rpc-service",
+    ),
+    re_path(
+        r"^scm-rpc/$",
+        ScmRpcServiceEndpoint.as_view(),
+        name="sentry-api-0-scm-rpc-service",
+    ),
+    # No trailing slash, because git never sends one. scm-git/hosts/ is kept free for a later route
+    # that names repositories by their provider host.
+    re_path(
+        r"^scm-git/repositories/(?P<repository_id>\d+)\.git/(?P<route>.+)$",
+        ScmGitEndpoint.as_view(),
+        name="sentry-api-0-scm-git",
+    ),
+    re_path(
+        r"^seer-rpc/(?P<method_name>\w+)/$",
+        SeerRpcServiceEndpoint.as_view(),
+        name="sentry-api-0-seer-rpc-service",
+    ),
+    re_path(
+        r"^feature-flags/$",
+        InternalFeatureFlagsEndpoint.as_view(),
+        name="sentry-api-0-internal-feature-flags",
+    ),
+    re_path(
+        r"^demo/email-capture/$",
+        EmailCaptureEndpoint.as_view(),
+        name="sentry-demo-mode-email-capture",
+    ),
+    # Cell routing endpoints
+    re_path(
+        r"^org-cell-mappings/$",
+        OrgCellMappingsEndpoint.as_view(),
+        name="sentry-api-0-org-cell-mappings",
+    ),
+    re_path(
+        r"^projectkey-cell-mappings/$",
+        ProjectKeyCellMappingsEndpoint.as_view(),
+        name="sentry-api-0-projectkey-cell-mappings",
+    ),
+    *preprod_urls.preprod_internal_urlpatterns,
+    *notification_platform_urls.internal_urlpatterns,
+    re_path(
+        r"^seer/metric-breaches/$",
+        SeerAdminMetricBreachesEndpoint.as_view(),
+        name="sentry-admin-seer-metric-breaches",
+    ),
+    re_path(
+        r"^seer/night-shift/trigger/$",
+        SeerAdminAgenticTriageTriggerEndpoint.as_view(),
+        name="sentry-admin-seer-night-shift-trigger",
+    ),
+    re_path(
+        r"^seer/autofix/retry/$",
+        SeerAdminAutofixRetryEndpoint.as_view(),
+        name="sentry-admin-seer-autofix-retry",
+    ),
+    re_path(
+        r"^seer/autofix/single-run/$",
+        SeerAdminAutofixSingleRunEndpoint.as_view(),
+        name="sentry-admin-seer-autofix-single-run",
+    ),
+]
+
+urlpatterns = [
+    re_path(
+        r"^agent-handoff/$",
+        ClaimAgentHandoffEndpoint.as_view(),
+        name="sentry-api-0-agent-handoff-claim",
+    ),
+    # Relay
+    re_path(
+        r"^relays/",
+        include(RELAY_URLS),
+    ),
+    # Groups / Issues
+    re_path(
+        r"^(?:issues|groups)/",
+        include(create_group_urls("sentry-api-0", is_legacy_path=True)),
+    ),
+    # Organizations
+    re_path(
+        r"^organizations/",
+        include(ORGANIZATION_URLS),
+    ),
+    # Projects
+    re_path(
+        r"^projects/",
+        include(PROJECT_URLS),
+    ),
+    # Teams
+    re_path(
+        r"^teams/",
+        include(TEAM_URLS),
+    ),
+    # Users
+    re_path(
+        r"^users/",
+        include(USER_URLS),
+    ),
+    # Sentry Apps
+    re_path(
+        r"^sentry-apps/",
+        include(SENTRY_APP_URLS),
+    ),
+    # Toplevel app installs
+    re_path(
+        r"^sentry-app-installations/",
+        include(SENTRY_APP_INSTALLATION_URLS),
+    ),
+    # Auth
+    re_path(
+        r"^auth/",
+        include(AUTH_URLS),
+    ),
+    # Auth
+    re_path(
+        r"^auth-v2/",
+        include(AUTH_V2_URLS),
+    ),
+    # Broadcasts
+    re_path(
+        r"^broadcasts/",
+        include(BROADCAST_URLS),
+    ),
+    #
+    #
+    #
+    re_path(
+        r"^assistant/$",
+        AssistantEndpoint.as_view(),
+        name="sentry-api-0-assistant",
+    ),
+    re_path(
+        r"^api-applications/$",
+        ApiApplicationsEndpoint.as_view(),
+        name="sentry-api-0-api-applications",
+    ),
+    re_path(
+        r"^api-applications/(?P<app_id>[^/]+)/$",
+        ApiApplicationDetailsEndpoint.as_view(),
+        name="sentry-api-0-api-application-details",
+    ),
+    re_path(
+        r"^api-applications/(?P<app_id>[^/]+)/rotate-secret/$",
+        ApiApplicationRotateSecretEndpoint.as_view(),
+        name="sentry-api-0-api-application-rotate-secret",
+    ),
+    re_path(
+        r"^api-authorizations/$",
+        ApiAuthorizationsEndpoint.as_view(),
+        name="sentry-api-0-api-authorizations",
+    ),
+    re_path(
+        r"^api-tokens/$",
+        ApiTokensEndpoint.as_view(),
+        name="sentry-api-0-api-tokens",
+    ),
+    re_path(
+        r"^api-tokens/(?P<token_id>[^/]+)/$",
+        ApiTokenDetailsEndpoint.as_view(),
+        name="sentry-api-0-api-token-details",
+    ),
+    re_path(
+        r"^seer/models/$",
+        SeerModelsEndpoint.as_view(),
+        name="sentry-api-0-seer-models",
+    ),
+    # List Authenticators
+    re_path(
+        r"^authenticators/$",
+        AuthenticatorIndexEndpoint.as_view(),
+        name="sentry-api-0-authenticator-index",
+    ),
+    # Project transfer
+    re_path(
+        r"^accept-transfer/$",
+        AcceptProjectTransferEndpoint.as_view(),
+        name="sentry-api-0-accept-project-transfer",
+    ),
+    # Organization invite
+    re_path(
+        r"^accept-invite/(?P<organization_id_or_slug>[^/]+)/(?P<member_id>[^/]+)/(?P<token>[^/]+)/$",
+        AcceptOrganizationInvite.as_view(),
+        name="sentry-api-0-organization-accept-organization-invite",
+    ),
+    re_path(
+        r"^notification-defaults/$",
+        NotificationDefaultsEndpoints.as_view(),
+        name="sentry-api-0-notification-defaults",
+    ),
+    re_path(
+        r"^sentry-apps-stats/$",
+        SentryAppsStatsEndpoint.as_view(),
+        name="sentry-api-0-sentry-apps-stats",
+    ),
+    # Document Integrations
+    re_path(
+        r"^doc-integrations/$",
+        DocIntegrationsEndpoint.as_view(),
+        name="sentry-api-0-doc-integrations",
+    ),
+    re_path(
+        r"^doc-integrations/(?P<doc_integration_id_or_slug>[^/]+)/$",
+        DocIntegrationDetailsEndpoint.as_view(),
+        name="sentry-api-0-doc-integration-details",
+    ),
+    re_path(
+        r"^doc-integrations/(?P<doc_integration_id_or_slug>[^/]+)/avatar/$",
+        DocIntegrationAvatarEndpoint.as_view(),
+        name="sentry-api-0-doc-integration-avatar",
+    ),
+    # Integration Features
+    re_path(
+        r"^integration-features/$",
+        IntegrationFeaturesEndpoint.as_view(),
+        name="sentry-api-0-integration-features",
+    ),
+    # Project Wizard
+    re_path(
+        r"^wizard/(?P<wizard_hash>[^/]+)/session/$",
+        SetupWizardSession.as_view(),
+        name="sentry-api-0-project-wizard-session",
+    ),
+    re_path(
+        r"^wizard/$",
+        SetupWizard.as_view(),
+        name="sentry-api-0-project-wizard-new",
+    ),
+    re_path(
+        r"^wizard/(?P<wizard_hash>[^/]+)/$",
+        SetupWizard.as_view(),
+        name="sentry-api-0-project-wizard",
+    ),
+    # Internal
+    re_path(
+        r"^internal/",
+        include(INTERNAL_URLS),
+    ),
+    # Relocations
+    re_path(
+        r"^relocations/",
+        include(RELOCATION_URLS),
+    ),
+    re_path(
+        r"^publickeys/relocations/$",
+        RelocationPublicKeyEndpoint.as_view(),
+        name="sentry-api-0-relocations-public-key",
+    ),
+    # Uptime checker public IP address list
+    re_path(
+        r"^uptime-ips/$",
+        UptimeIpsEndpoint.as_view(),
+        name="sentry-api-0-uptime-ips",
+    ),
+    # Tempest public IP address list
+    re_path(
+        r"^tempest-ips/$",
+        TempestIpsEndpoint.as_view(),
+        name="sentry-api-0-tempest-ips",
+    ),
+    # Secret Scanning
+    re_path(
+        r"^secret-scanning/github/$",
+        SecretScanningGitHubEndpoint.as_view(),
+        name="sentry-api-0-secret-scanning-github",
+    ),
+    # Catch all
+    re_path(
+        r"^$",
+        IndexEndpoint.as_view(),
+        name="sentry-api-index",
+    ),
+    re_path(
+        r"^",
+        CatchallEndpoint.as_view(),
+        name="sentry-api-catchall",
+    ),
+    # re_path(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework'))
+]

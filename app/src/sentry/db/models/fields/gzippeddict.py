@@ -1,0 +1,49 @@
+from __future__ import annotations
+
+from typing import cast
+
+from django.db.models import Model, TextField
+
+from sentry.db.models.utils import Creator
+from sentry.utils import json
+
+__all__ = ("GzippedDictField",)
+
+
+class GzippedDictField(TextField[dict[str, object] | None, dict[str, object] | None]):
+    """
+    Slightly different from a JSONField in the sense that the default
+    value is a dictionary.
+    """
+
+    def contribute_to_class(self, cls: type[Model], name: str, private_only: bool = False) -> None:
+        """
+        Add a descriptor for backwards compatibility
+        with previous Django behavior.
+        """
+        super().contribute_to_class(cls, name, private_only=private_only)
+        setattr(cls, name, Creator(self))
+
+    def to_python(self, value: object) -> object:
+        try:
+            if not value:
+                return {}
+            return json.loads(cast(str | bytes, value))
+        except (ValueError, TypeError):
+            return value
+
+    def from_db_value(self, value: object, expression: object, connection: object) -> object:
+        return self.to_python(value)
+
+    def get_prep_value(self, value: object) -> str | None:
+        if not value and self.null:
+            # save ourselves some storage
+            return None
+        elif isinstance(value, bytes):
+            value = value.decode("utf-8")
+        if value is None and self.null:
+            return None
+        return json.dumps(value)
+
+    def value_to_string(self, obj: Model) -> str:
+        return cast(str, self.get_prep_value(self.value_from_object(obj)))

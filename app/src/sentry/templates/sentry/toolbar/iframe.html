@@ -1,0 +1,57 @@
+{% comment %}
+Template returned for requests to /iframe. The Sentry Toolbar is decommissioned;
+this page only tells the toolbar client to render its Login button, and opens
+the notice page when that button is clicked.
+Required context variables:
+- referrer: string. HTTP header from the request object. May have trailing `/`.
+{% endcomment %}
+{% load sentry_assets %}
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Sentry Toolbar iFrame</title>
+    <link rel="icon" type="image/png" href="{% absolute_asset_url "sentry" "images/favicon.png" %}">
+  </head>
+  <body>
+    {% script %}
+    <script>
+      (function() {
+        const referrer = '{{ referrer|escapejs }}';
+        if (!referrer) {
+          return;
+        }
+        const referrerOrigin = new URL(referrer).origin;
+
+        function postStateMessage(state) {
+          window.parent.postMessage({ source: 'sentry-toolbar', message: state }, referrerOrigin);
+        }
+
+        window.addEventListener('message', (messageEvent) => {
+          if (messageEvent.origin !== referrerOrigin) {
+            return;
+          }
+          const { message, source } = messageEvent.data ?? {};
+          if (source !== 'sentry-toolbar' || message !== 'request-login') {
+            return;
+          }
+
+          window.open(
+            new URL('../login-success/', window.location.href).toString(),
+            'sentry-toolbar-auth-popup',
+            'popup=true,innerWidth=800,innerHeight=550'
+          );
+
+          // `stale` makes the client reload this iframe, which resets its
+          // "Logging in..." UI back to the Login button.
+          postStateMessage('stale');
+        });
+
+        postStateMessage('logged-out');
+      })();
+    </script>
+    {% endscript %}
+
+{% comment %}
+No need to close `body`. If we do then middleware will inject some extra markup
+we don't need. Browsers can figure out when it's missing and deal with it.
+{% endcomment %}

@@ -1,0 +1,189 @@
+from typing import Any, NotRequired, TypedDict
+
+from django.db import router, transaction
+from rest_framework import serializers
+
+from sentry.api.serializers.rest_framework import CamelSnakeSerializer
+from sentry.workflow_engine.endpoints.validators.base.data_condition import (
+    BaseDataConditionValidator,
+    DataConditionInput,
+)
+from sentry.workflow_engine.endpoints.validators.utils import remove_items_by_api_input
+from sentry.workflow_engine.models import DataConditionGroup
+from sentry.workflow_engine.models.data_condition import (
+    Condition,
+    DataCondition,
+    get_condition_handler,
+    get_internal_condition_types,
+)
+from sentry.workflow_engine.types import DataConditionHandler
+
+
+class DataConditionGroupInput(TypedDict):
+    id: NotRequired[int]
+    logicType: str
+    conditions: NotRequired[list[DataConditionInput]]
+
+
+class BaseDataConditionGroupValidator(CamelSnakeSerializer[Any]):
+    id = serializers.IntegerField(required=False)
+    logic_type = serializers.ChoiceField([(t.value, t.value) for t in DataConditionGroup.Type])
+    conditions = serializers.ListField(required=False)
+
+    # When set, every condition must use a handler from this group. Workflow triggers and
+    # action filters are evaluated against WorkflowEventData, so operator conditions and
+    # other handler groups can never evaluate there.
+    handler_group: DataConditionHandler.Group | None = None
+
+    def __init__(
+        self, *args: Any, handler_group: DataConditionHandler.Group | None = None, **kwargs: Any
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        if handler_group is not None:
+            self.handler_group = handler_group
+
+    def validate(self, attrs: dict[str, Any]) -> dict[str, Any]:
+        group_id = attrs.get("id")
+        organization = self.context.get("organization")
+        if group_id is not None and organization is not None:
+            self._validate_no_internal_conditions(group_id, organization.id)
+        return attrs
+
+    def _validate_no_internal_conditions(self, group_id: int, organization_id: int) -> None:
+        # Check stored conditions: the request may omit or replace internal ones.
+        internal_types = get_internal_condition_types()
+        if (
+            internal_types
+            and DataConditionGroup.objects.filter(
+                id=group_id,
+                organization_id=organization_id,
+                conditions__type__in=internal_types,
+            ).exists()
+        ):
+            raise serializers.ValidationError(
+                "Internal condition groups cannot be configured through the API."
+            )
+
+    def validate_conditions(self, value: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        conditions = []
+        for condition in value:
+            condition_validator = BaseDataConditionValidator(data=condition, context=self.context)
+            condition_validator.is_valid(raise_exception=True)
+            validated = condition_validator.validated_data
+            self._validate_handler_group(validated["type"])
+            conditions.append(validated)
+
+        return conditions
+
+    def _validate_handler_group(self, condition_type: str) -> None:
+        if self.handler_group is None:
+            return
+
+        handler = get_condition_handler(Condition(condition_type))
+        if handler is None or handler.group != self.handler_group:
+            raise serializers.ValidationError(
+                f"Condition type '{condition_type}' is not a valid {self.handler_group} condition"
+            )
+
+    def _validate_logic_type(self, condition_data: list[dict[str, Any]], logic_type: str) -> None:
+        """
+        Validate that if we're passed a "trigger" it has the logic type 'any-short'. We only validate on create
+        because we have conditions grandfathered into logic type 'all' that were migrated from issue alerts that would
+        break upon updating.
+        """
+        for condition in condition_data:
+            try:
+                condition_type = Condition(str(condition.get("type")))
+            except ValueError:
+                raise serializers.ValidationError(
+                    f"Invalid condition type, '{condition.get('type')}'"
+                )
+
+            condition_handler = get_condition_handler(condition_type)
+
+            if (
+                condition_handler is not None
+                and condition_handler.group == DataConditionHandler.Group.WORKFLOW_TRIGGER
+            ) and (logic_type != DataConditionGroup.Type.ANY_SHORT_CIRCUIT.value):
+                raise serializers.ValidationError("Triggers' logic type must be 'any-short'")
+
+    def update_or_create_condition(
+        self, condition_data: dict[str, Any], condition_group_id: int
+    ) -> DataCondition:
+        validator = BaseDataConditionValidator()
+        condition_id = condition_data.get("id")
+
+        if condition_id:
+            try:
+                # Validate that the condition already belongs to this condition group, preventing
+                # a condition from another group from being re-parented into this one.
+                condition = DataCondition.objects.get(
+                    id=condition_id,
+                    condition_group_id=condition_group_id,
+                )
+            except DataCondition.DoesNotExist as exc:
+                raise serializers.ValidationError(
+                    f"Condition with id {condition_id} not found."
+                ) from exc
+
+            condition = validator.update(condition, condition_data)
+        else:
+            condition = validator.create(condition_data)
+
+        return condition
+
+    def _validate_new_conditions(self, condition_data: list[dict[str, Any]]) -> None:
+        """
+        When creating a new data condition, ensure that the conditions don't reference existing conditions.
+        """
+        for condition in condition_data:
+            condition_id = condition.get("id")
+            if condition_id:
+                raise serializers.ValidationError(f"Condition with id {condition_id} not found.")
+
+    def update(
+        self,
+        instance: DataConditionGroup,
+        validated_data: dict[str, Any],
+    ) -> DataConditionGroup:
+        # Require organization context to validate ownership of conditions
+        context_org = self.context.get("organization") if self.context else None
+        if not context_org:
+            raise serializers.ValidationError("Organization context is required.")
+        if instance.organization_id != context_org.id:
+            raise serializers.ValidationError(f"Condition group with id {instance.id} not found.")
+
+        # Detector updates call update() directly and may omit the group ID from validation.
+        self._validate_no_internal_conditions(instance.id, context_org.id)
+
+        remove_items_by_api_input(validated_data.get("conditions", []), instance.conditions, "id")
+        conditions = validated_data.pop("conditions", None)
+        if conditions:
+            for condition_data in conditions:
+                # Always set condition_group_id programmatically to prevent cross-org IDOR
+                condition_data["condition_group_id"] = instance.id
+                self.update_or_create_condition(condition_data, instance.id)
+
+        # update the condition group
+        instance.update(**validated_data)
+        return instance
+
+    def create(self, validated_data: dict[str, Any]) -> DataConditionGroup:
+        logic_type = validated_data.get("logic_type", DataConditionGroup.Type.ANY.value)
+        conditions = validated_data.get("conditions", [])
+        self._validate_logic_type(conditions, logic_type)
+        self._validate_new_conditions(conditions)
+
+        with transaction.atomic(router.db_for_write(DataConditionGroup)):
+            condition_group = DataConditionGroup.objects.create(
+                logic_type=validated_data["logic_type"],
+                organization_id=self.context["organization"].id,
+            )
+
+            for condition in conditions:
+                # Always set condition_group_id programmatically to prevent cross-org IDOR
+                condition["condition_group_id"] = condition_group.id
+                condition_validator = BaseDataConditionValidator()
+                condition_validator.create(condition)
+
+            return condition_group

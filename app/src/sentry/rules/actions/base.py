@@ -1,0 +1,57 @@
+from __future__ import annotations
+
+import abc
+import logging
+from collections.abc import Generator, MutableMapping
+from typing import Any
+
+from sentry.notifications.types import NotificationActionContext
+from sentry.rules.base import CallbackFuture, RuleBase
+from sentry.services.eventstore.models import GroupEvent
+
+logger = logging.getLogger("sentry.rules")
+
+
+def instantiate_action(
+    context: NotificationActionContext, action: MutableMapping[str, Any]
+) -> EventAction | None:
+    from sentry.rules import rules
+
+    action_id = action["id"]
+    action_cls = rules.get(action_id)
+    if action_cls is None:
+        logger.warning("Unregistered action %r", action["id"])
+        return None
+
+    action_inst = action_cls(context.project, data=action, context=context)
+    if not isinstance(action_inst, EventAction):
+        logger.warning("Unregistered action %r", action["id"])
+        return None
+
+    return action_inst
+
+
+class EventAction(RuleBase, abc.ABC):
+    rule_type = "action/event"
+
+    @abc.abstractmethod
+    def after(
+        self, event: GroupEvent, notification_uuid: str | None = None
+    ) -> Generator[CallbackFuture]:
+        """
+        Executed after a Rule matches.
+
+        Should yield CallBackFuture instances which will then be passed into
+        the given callback.
+
+        See the notification implementation for example usage.
+
+
+        >>> def after(self, state):
+        >>>     yield self.future(self.print_results)
+        >>>
+        >>> def print_results(self, event, futures):
+        >>>     print('Got futures for Event {}'.format(event.id))
+        >>>     for future in futures:
+        >>>         print(future)
+        """

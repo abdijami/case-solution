@@ -1,0 +1,774 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from dataclasses import dataclass
+from enum import IntEnum, StrEnum, unique
+from functools import total_ordering
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
+
+from django.core.cache import cache
+
+from sentry import features, options
+from sentry.constants import DataCategory
+from sentry.sentry_metrics.use_case_id_registry import CARDINALITY_LIMIT_USE_CASES
+from sentry.utils.json import prune_empty_keys
+from sentry.utils.services import Service
+
+if TYPE_CHECKING:
+    from sentry.models.organization import Organization
+    from sentry.models.organizationmember import OrganizationMember
+    from sentry.models.project import Project
+    from sentry.models.projectkey import ProjectKey
+    from sentry.monitors.constants import PermitCheckInStatus
+    from sentry.profiles.utils import Profile
+    from sentry.quotas.types import SeatObject
+
+
+@unique
+class QuotaScope(IntEnum):
+    ORGANIZATION = 1
+    PROJECT = 2
+    KEY = 3
+
+    def api_name(self) -> str:
+        return self.name.lower()
+
+
+AbuseQuotaScope = Literal[QuotaScope.ORGANIZATION, QuotaScope.PROJECT]
+
+
+@dataclass
+class AbuseQuota:
+    # Quota Id.
+    id: str
+    # Org an Sentry option name.
+    option: str
+    # Quota categories.
+    categories: list[DataCategory]
+    # Quota Scope.
+    scope: AbuseQuotaScope
+    # The optional namespace that the quota belongs to.
+    namespace: str | None = None
+    # Old org option name still used for compatibility reasons,
+    # takes precedence over `option` and `compat_option_sentry`.
+    compat_option_org: str | None = None
+    # Old Sentry option name still used for compatibility reasons,
+    # takes precedence over `option`.
+    compat_option_sentry: str | None = None
+
+
+@dataclass
+class RetentionSettings:
+    standard: int
+    downsampled: int
+
+    def to_object(self) -> Mapping[str, Any]:
+        return {
+            "standard": self.standard,
+            "downsampled": self.downsampled,
+        }
+
+
+# This mirrors the Retentions struct in relay
+# https://github.com/getsentry/relay/blob/641e7f20cd/relay-dynamic-config/src/project.rs#L34-L45
+# On wire-name collisions (TRANSACTION/SPAN, TRACE_METRIC/TRACE_METRIC_BYTE) the
+# last entry wins, so list categories from least to most preferred.
+RETENTIONS_CONFIG_MAPPING = {
+    DataCategory.LOG_BYTE: "log",
+    DataCategory.TRANSACTION: "span",
+    DataCategory.SPAN: "span",
+    DataCategory.TRACE_METRIC: "traceMetric",
+    DataCategory.TRACE_METRIC_BYTE: "traceMetric",
+}
+
+
+class TrimmingConfig(TypedDict):
+    maxSize: int
+
+
+# This mirrors the TrimmingConfigs struct in Relay
+# https://github.com/getsentry/relay/blob/73e5f9816b10c518b4451d46ebffa709f9f7e897/relay-dynamic-config/src/project.rs#L297-L301
+class TrimmingConfigs(TypedDict, total=False):
+    span: TrimmingConfig
+
+
+def build_metric_abuse_quotas() -> list[AbuseQuota]:
+    quotas = list()
+
+    scopes: list[tuple[AbuseQuotaScope, str]] = [
+        (QuotaScope.PROJECT, "p"),
+        (QuotaScope.ORGANIZATION, "o"),
+    ]
+
+    for scope, prefix in scopes:
+        quotas.append(
+            AbuseQuota(
+                id=f"{prefix}amb",
+                option=f"metric-abuse-quota.{scope.api_name()}",
+                categories=[DataCategory.METRIC_BUCKET],
+                scope=scope,
+            )
+        )
+
+        for use_case in CARDINALITY_LIMIT_USE_CASES:
+            quotas.append(
+                AbuseQuota(
+                    id=f"{prefix}amb_{use_case.value}",
+                    option=f"metric-abuse-quota.{scope.api_name()}.{use_case.value}",
+                    categories=[DataCategory.METRIC_BUCKET],
+                    scope=scope,
+                    namespace=use_case.value,
+                )
+            )
+
+    return quotas
+
+
+class QuotaDimension(StrEnum):
+    CHECK_IN_SLUG = "checkInSlug"
+    CHECK_IN_ENVIRONMENT = "checkInEnvironment"
+
+
+@dataclass(frozen=True)
+class QuotaGroupBy:
+    """
+    Counts a quota separately for each combination of dimension values.
+    ``max_cardinality`` caps the number of combinations per quota window.
+    """
+
+    max_cardinality: int
+    dimensions: tuple[QuotaDimension, ...]
+
+    def to_json(self) -> dict[str, object]:
+        return {
+            "maxCardinality": self.max_cardinality,
+            "dimensions": [d.value for d in self.dimensions],
+        }
+
+
+@total_ordering
+class QuotaConfig:
+    """
+    Abstract configuration for a quota.
+
+    Sentry applies multiple quotas to an event before accepting it, some of
+    which can be configured by the user depending on plan. An event will be
+    counted against all quotas that it matches with based on the ``category``.
+
+    The `QuotaConfig` object is not persisted, but is the contract between
+    Sentry and Relay. Most importantly, a `QuotaConfig` instance does not
+    contain information about how many events can still be accepted, it only
+    represents settings that should be applied. The actual counts are in the
+    rate limiter (e.g. implemented via Redis caches).
+
+    :param id:          The unique identifier for counting this quota. Required
+                        except for quotas with ``limit=0``, since they are
+                        statically enforced.
+    :param categories:  A set of data categories that this quota applies to. If
+                        missing or empty, this quota applies to all data.
+    :param scope:       A scope for this quota. This quota is enforced
+                        separately within each instance of this scope (e.g. for
+                        each project key separately). Defaults to ORGANIZATION.
+    :param scope_id:    Identifier of the scope to apply to. If set, then this
+                        quota will only apply to the specified scope instance
+                        (e.g. a project key). Requires ``scope`` to be set
+                        explicitly.
+    :param limit:       Maximum number of matching events allowed. Can be ``0``
+                        to reject all events, ``None`` for an unlimited counted
+                        quota, or a positive number for enforcement. Requires
+                        ``window`` if the limit is not ``0``.
+    :param window:      The time window in seconds to enforce this quota in.
+                        Required in all cases except ``limit=0``, since those
+                        quotas are not measured.
+    :param reason_code: A machine readable reason returned when this quota is
+                        exceeded. Required in all cases except ``limit=None``,
+                        since unlimited quotas can never be exceeded.
+    :param group_by:    Counts the quota separately for each combination of
+                        these dimensions. See ``QuotaGroupBy``.
+    """
+
+    __slots__ = [
+        "id",
+        "categories",
+        "scope",
+        "scope_id",
+        "limit",
+        "window",
+        "reason_code",
+        "namespace",
+        "group_by",
+    ]
+
+    id: str | None
+    categories: set[DataCategory]
+    scope: QuotaScope
+    scope_id: str | None
+    limit: int | None
+    window: int | None
+    reason_code: str | None
+    namespace: str | None
+    group_by: QuotaGroupBy | None
+
+    def __init__(
+        self,
+        id: str | None = None,
+        categories: Iterable[DataCategory] | None = None,
+        scope: QuotaScope | None = None,
+        scope_id: str | int | None = None,
+        limit: int | None = None,
+        window: int | None = None,
+        reason_code: str | None = None,
+        namespace: str | None = None,
+        group_by: QuotaGroupBy | None = None,
+    ) -> None:
+        if limit is not None:
+            assert reason_code, "reason code required for fallible quotas"
+            assert isinstance(limit, int), "limit must be an integer"
+
+        if limit == 0:
+            assert id is None, "reject-all quotas cannot be tracked"
+            assert window is None, "tracked quotas must specify a window"
+        else:
+            assert id, "measured quotas require an identifier"
+            assert window and window > 0, "window cannot be zero"
+
+        if scope_id is not None:
+            assert scope, "scope must be declared explicitly when scope_id is given"
+        elif scope is None:
+            scope = QuotaScope.ORGANIZATION
+
+        self.id = id
+        self.scope = scope
+        self.scope_id = str(scope_id) if scope_id is not None else None
+        self.categories = set(categories or [])
+        # NOTE: Use `quotas.base._limit_from_settings` to map from settings
+        self.limit = limit
+        self.window = window
+        self.reason_code = reason_code
+        self.namespace = namespace
+        self.group_by = group_by
+
+    @property
+    def should_track(self) -> bool:
+        """
+        Whether the quotas service should track this quota.
+        """
+
+        return self.id is not None and self.window is not None
+
+    def to_json(self) -> dict[str, object]:
+        categories = None
+        if self.categories:
+            categories = [c.api_name() for c in self.categories]
+
+        data = {
+            "id": str(self.id) if self.id is not None else None,
+            "scope": self.scope.api_name(),
+            "scopeId": self.scope_id,
+            "categories": categories,
+            "limit": self.limit,
+            "window": self.window,
+            "namespace": self.namespace,
+            "reasonCode": self.reason_code,
+            "groupBy": self.group_by.to_json() if self.group_by else None,
+        }
+
+        return prune_empty_keys(data)
+
+    def __str__(self) -> str:
+        return str(self.to_json())
+
+    def __repr__(self) -> str:
+        return str(self.to_json())
+
+    def _comparison_key(self) -> tuple[object, ...]:
+        """A total, deterministic key describing this quota by value.
+
+        ``QuotaConfig`` instances are not persisted and are rebuilt independently on
+        each call, so equality and ordering must be value-based rather than
+        identity-based. ``categories`` is a ``set``, so its members are sorted here to
+        keep the key stable. Optional fields are encoded as ``(present, value)`` pairs
+        so ``None`` never has to be compared against a concrete value.
+        """
+        categories = tuple(sorted(str(category) for category in self.categories))
+        return (
+            self.id is not None,
+            "" if self.id is None else str(self.id),
+            int(self.scope) if self.scope is not None else -1,
+            self.scope_id is not None,
+            self.scope_id or "",
+            categories,
+            self.limit is not None,
+            self.limit if self.limit is not None else 0,
+            self.window is not None,
+            self.window if self.window is not None else 0,
+            self.reason_code is not None,
+            self.reason_code or "",
+            self.namespace is not None,
+            self.namespace or "",
+            self.group_by is not None,
+            (
+                (self.group_by.max_cardinality, self.group_by.dimensions)
+                if self.group_by
+                else (0, ())
+            ),
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, QuotaConfig):
+            return NotImplemented
+        return self._comparison_key() == other._comparison_key()
+
+    def __lt__(self, other: object) -> bool:
+        if not isinstance(other, QuotaConfig):
+            return NotImplemented
+        return self._comparison_key() < other._comparison_key()
+
+    def __hash__(self) -> int:
+        return hash(self._comparison_key())
+
+
+def _limit_from_settings(x: Any) -> int | None:
+    """
+    limit=0 (or any falsy value) in database means "no limit". Convert that to
+    limit=None as limit=0 in code means "reject all".
+    """
+
+    return int(x or 0) or None
+
+
+@dataclass
+class SeatAssignmentResult:
+    assignable: bool
+    """
+    Can the seat assignment be made?
+    """
+    reason: str = ""
+    """
+    The human readable reason the assignment can be made or not.
+    """
+
+    def __post_init__(self) -> None:
+        if not self.assignable and not self.reason:
+            raise ValueError("`reason` must be specified when not assignable")
+
+
+def index_data_category(event_type: str | None, organization: Organization | None) -> DataCategory:
+    if event_type == "transaction" and features.has(
+        "organizations:transaction-metrics-extraction", organization
+    ):
+        # TODO: This logic should move into sentry-relay, once the consequences
+        # of making `from_event_type` return `TRANSACTION_INDEXED` are clear.
+        # https://github.com/getsentry/relay/blob/d77c489292123e53831e10281bd310c6a85c63cc/relay-server/src/envelope.rs#L121
+        return DataCategory.TRANSACTION_INDEXED
+
+    return DataCategory.from_event_type(event_type)
+
+
+class Quota(Service):
+    """
+    Quotas handle tracking a project's usage and respond whether or not a
+    project has been configured to throttle incoming data if they go beyond the
+    specified quota.
+
+    Quotas can specify a window to be tracked in, such as per minute or per
+    hour. Additionally, quotas allow to specify the data categories they apply
+    to, for example error events or attachments. For more information on quota
+    parameters, see ``QuotaConfig``.
+
+    To retrieve a list of active quotas, use ``quotas.get_quotas``.
+    """
+
+    __all__ = (
+        "get_abuse_quotas",
+        "validate",
+        "refund",
+        "get_event_retention",
+        "get_quotas",
+        "get_blended_sample_rate",
+        "get_transaction_sampling_tier_for_volume",
+        "check_accept_monitor_checkin",
+        "update_monitor_slug",
+    )
+
+    def __init__(self, **options: object) -> None:
+        pass
+
+    def get_quotas(
+        self,
+        project: Project,
+        key: ProjectKey | None = None,
+        keys: Iterable[ProjectKey] | None = None,
+    ) -> list[QuotaConfig]:
+        """
+        Returns a quotas for the given project and its organization.
+
+        The return values are instances of ``QuotaConfig``. See its
+        documentation for more information about the values.
+
+        :param project: The project instance that is used to determine quotas.
+        :param key:     A project project key to obtain quotas for. If omitted,
+                        only project and organization quotas are used.
+        :param keys:    Similar to ``key``, except for multiple keys.
+        """
+        return []
+
+    def refund(
+        self,
+        project: Project,
+        key: ProjectKey | None = None,
+        timestamp: float | None = None,
+        category: DataCategory | None = None,
+        quantity: int | None = None,
+    ) -> None:
+        """
+        Signals that data counted against quotas was dropped, and refunds the
+        previously consumed quota.
+
+        :param project:   The project that the dropped data belonged to.
+        :param key:       The project key that was used to ingest the data. If
+                          omitted, then only project and organization quotas are
+                          refunded.
+        :param timestamp: The timestamp at which data was ingested. This is used
+                          to determine the correct quota window to refund the
+                          previously consumed data to.
+        :param category:  The data category of the item to refund. This is used
+                          to determine the quotas that should be refunded.
+                          Defaults to ``DataCategory.ERROR``.
+        :param quantity:  The quantity to refund. Defaults to ``1``, which is
+                          the only value that should be used for events. For
+                          attachments, this should be set to the size of the
+                          attachment in bytes.
+        """
+
+    def get_event_retention(
+        self,
+        organization: Organization | None,
+        category: DataCategory | None = None,
+        **kwargs: object,
+    ) -> int | None:
+        """
+        Returns the retention for events in the given organization in days.
+        Returns ``None`` if events are to be stored indefinitely.
+
+        :param organization: The organization model.
+        :param category: Return the retention policy for this data category.
+                         If this is not given, return the org-level policy.
+        """
+        return _limit_from_settings(options.get("system.event-retention-days"))
+
+    def get_downsampled_event_retention(
+        self,
+        organization: Organization | None,
+        category: DataCategory | None = None,
+        **kwargs: object,
+    ) -> int:
+        """
+        Returns the retention for downsampled events in the given organization in days.
+        Returning ``0`` means downsampled event retention will default to the value of ``get_event_retention``.
+        """
+        return 0
+
+    def get_retentions(
+        self, organization: Organization | None, **kwargs: object
+    ) -> Mapping[DataCategory, RetentionSettings]:
+        return {}
+
+    def get_trimming_configs(
+        self, organization: Organization | None, **kwargs: object
+    ) -> TrimmingConfigs:
+        """
+        Returns per-data-category trimming settings.
+        """
+        return {}
+
+    def validate(self) -> None:
+        """
+        Validates that the quota service is operational.
+        """
+
+    def get_key_quota(self, key: ProjectKey) -> tuple[int | None, int | None]:
+        from sentry import features
+
+        # XXX(epurkhiser): Avoid excessive feature manager checks (which can be
+        # expensive depending on feature handlers) for project rate limits.
+        # This happens on /store.
+        cache_key = f"project:{key.project.id}:features:rate-limits"
+
+        has_rate_limits = cache.get(cache_key)
+        if has_rate_limits is None:
+            has_rate_limits = features.has("projects:rate-limits", key.project)
+            cache.set(cache_key, has_rate_limits, 600)
+
+        if not has_rate_limits:
+            return (None, None)
+
+        limit, window = key.rate_limit
+        return _limit_from_settings(limit), window
+
+    def get_abuse_quotas(self, org: Organization) -> Iterator[QuotaConfig]:
+        # Per-project abuse quotas for errors, transactions, attachments, sessions.
+        global_abuse_window = options.get("project-abuse-quota.window")
+
+        abuse_quotas = [
+            AbuseQuota(
+                id="pae",
+                option="project-abuse-quota.error-limit",
+                compat_option_org="sentry:project-error-limit",
+                compat_option_sentry="getsentry.rate-limit.project-errors",
+                categories=DataCategory.error_categories(),
+                scope=QuotaScope.PROJECT,
+            ),
+            AbuseQuota(
+                id="paa",
+                option="project-abuse-quota.attachment-limit",
+                categories=[DataCategory.ATTACHMENT],
+                scope=QuotaScope.PROJECT,
+            ),
+            AbuseQuota(
+                id="paai",
+                option="project-abuse-quota.attachment-item-limit",
+                categories=[DataCategory.ATTACHMENT_ITEM],
+                scope=QuotaScope.PROJECT,
+            ),
+            AbuseQuota(
+                id="pas",
+                option="project-abuse-quota.session-limit",
+                categories=[DataCategory.SESSION],
+                scope=QuotaScope.PROJECT,
+            ),
+        ]
+
+        abuse_quotas.extend(build_metric_abuse_quotas())
+
+        # XXX: These reason codes are hardcoded in getsentry:
+        #      as `RateLimitReasonLabel.PROJECT_ABUSE_LIMIT` and `RateLimitReasonLabel.ORG_ABUSE_LIMIT`.
+        #      Don't change it here. If it's changed in getsentry, it needs to be synced here.
+        reason_codes = {
+            QuotaScope.ORGANIZATION: "org_abuse_limit",
+            QuotaScope.PROJECT: "project_abuse_limit",
+        }
+
+        for quota in abuse_quotas:
+            limit: int | None = 0
+            abuse_window = global_abuse_window
+
+            # compat options were previously present in getsentry
+            # for errors and transactions. The first one is the org
+            # option for overriding the second one (global option).
+            # For now, these deprecated ones take precedence over the new
+            # to preserve existing behavior.
+            if quota.compat_option_org:
+                limit = org.get_option(quota.compat_option_org)
+            if not limit and quota.compat_option_sentry:
+                limit = options.get(quota.compat_option_sentry)
+
+            if not limit:
+                limit = org.get_option(quota.option)
+            if not limit:
+                limit = options.get(quota.option)
+
+            limit = _limit_from_settings(limit)
+            if limit is None:
+                # Unlimited.
+                continue
+
+            # Negative limits in config mean a reject-all quota.
+            if limit < 0:
+                yield QuotaConfig(
+                    limit=0,
+                    scope=quota.scope,
+                    categories=quota.categories,
+                    reason_code="disabled",
+                    namespace=quota.namespace,
+                )
+            else:
+                yield QuotaConfig(
+                    id=quota.id,
+                    limit=limit * abuse_window,
+                    scope=quota.scope,
+                    categories=quota.categories,
+                    window=abuse_window,
+                    reason_code=reason_codes[quota.scope],
+                    namespace=quota.namespace,
+                )
+
+    def get_monitor_quota(self, project: Project) -> tuple[int | None, int | None]:
+        from sentry.monitors.rate_limit import get_project_monitor_quota
+
+        return get_project_monitor_quota(project)
+
+    def get_blended_sample_rate(
+        self, project: Project | None = None, organization_id: int | None = None
+    ) -> float | None:
+        """
+        Returns the blended sample rate for an org based on the package that they are currently on. Returns ``None``
+        if the organization doesn't have dynamic sampling.
+
+        The reasoning for having two params as `Optional` is because this method was first designed to work with
+        `Project` but due to requirements change the `Organization` was needed and since we can get the `Organization`
+        from the `Project` we allow one or the other to be passed.
+
+        :param project: The project model.
+        :param organization_id: The organization id.
+        """
+
+    def get_transaction_sampling_tier_for_volume(
+        self, organization_id: int, volume: int
+    ) -> tuple[int, float] | None:
+        """
+        Returns the transaction sampling tier closest to a specific volume.
+
+        The organization_id is required because the tier is based on the organization's plan, and we have to check
+        whether the organization has dynamic sampling.
+
+        :param organization_id: The organization id.
+        :param volume: The volume of transaction of the given project.
+        """
+
+    def check_assign_seat(self, seat_object: SeatObject) -> SeatAssignmentResult:
+        """
+        Determines if an assignable seat object can be assigned a seat.
+        If it is not possible to assign a monitor a seat, a reason
+        will be included in the response.
+        """
+        return SeatAssignmentResult(assignable=True)
+
+    def check_assign_seats(
+        self,
+        seat_objects: Sequence[SeatObject],
+    ) -> SeatAssignmentResult:
+        """
+        Determines if a list of assignable seat objects can be assigned seat.
+        If it is not possible to assign a seat to all given objects, a reason
+        will be included in the response.
+        """
+        return SeatAssignmentResult(assignable=True)
+
+    def assign_seat(self, seat_object: SeatObject) -> int:
+        """
+        Assigns a seat to an object if possible, resulting in Outcome.ACCEPTED.
+        If the object cannot be assigned a seat it will be
+        Outcome.RATE_LIMITED.
+        """
+        from sentry.utils.outcomes import Outcome
+
+        return Outcome.ACCEPTED
+
+    def disable_seat(self, seat_object: SeatObject) -> None:
+        """
+        Disables an assigned seat.
+        """
+
+    def remove_seat(self, seat_object: SeatObject) -> None:
+        """
+        Removes an assigned seat.
+        """
+
+    def check_accept_monitor_checkin(
+        self, project_id: int, monitor_slug: str
+    ) -> PermitCheckInStatus:
+        """
+        Will return a `PermitCheckInStatus`.
+        """
+        from sentry.monitors.constants import PermitCheckInStatus
+
+        return PermitCheckInStatus.ACCEPT
+
+    def update_monitor_slug(self, previous_slug: str, new_slug: str, project_id: int) -> None:
+        """
+        Updates a monitor seat assignment's slug.
+        """
+
+    def should_emit_profile_duration_outcome(
+        self, organization: Organization, profile: Profile
+    ) -> bool:
+        """
+        Determines if the profile duration outcome should be emitted.
+        """
+        return True
+
+    def on_role_change(
+        self,
+        organization: Organization,
+        organization_member: OrganizationMember,
+        previous_role: str,
+        new_role: str,
+    ) -> None:
+        """
+        Called when an organization member's role is changed.
+        This is used to run any Subscription logic that needs to happen when a role is changed.
+
+        Args:
+            organization: The organization the member belongs to
+            organization_member: The member whose role is being changed
+            previous_role: The member's role before the change
+            new_role: The member's new role after the change
+        """
+        pass
+
+    def has_usage_quota(self, org_id: int, data_category: DataCategory) -> bool:
+        """
+        Check if organization has available quota for a usage-based category.
+
+        This is for categories with TallyType.USAGE (not SEAT-based). Unlike
+        cost-based Reserved Budgets (where reserved=-2), this checks usage-based
+        quotas where reserved=N means N events are allocated.
+
+        Use for usage-based categories like SIZE_ANALYSIS, INSTALLABLE_BUILD, and
+        similar categories that are not rate-limited in Relay.
+
+        Args:
+            org_id: The organization ID
+            data_category: The data category to check quota for
+
+        Returns:
+            bool: True if the organization has quota available, False otherwise.
+        """
+        return True
+
+    def record_seer_run(
+        self,
+        org_id: int,
+        project_id: int,
+        data_category: DataCategory,
+        seat_object: SeatObject | None = None,
+    ) -> None:
+        """
+        Records a seer run for an organization.
+        """
+        return
+
+    def has_profile_duration_quota(self, org_id: int, data_category: DataCategory) -> bool:
+        """
+        Determines if the organization has quota available for the given data category.
+
+        Args:
+            org_id: The ID of the organization to check
+            data_category: The data category to check quota for.
+
+        Returns:
+            bool: True if the organization has quota available, False otherwise.
+                  Always False if data category is not a profile duration category.
+        """
+        return True
+
+    def get_dashboard_limit(self, org_id: int) -> int:
+        """
+        Returns the maximum number of dashboards allowed for the organization's plan type.
+        """
+        return -1
+
+    def get_metric_detector_limit(self, org_id: int) -> int:
+        """
+        Returns the maximum number of detectors allowed for the organization's plan type.
+        """
+        return -1
+
+    def check_seer_quota(
+        self, org_id: int, data_category: DataCategory, seat_object: SeatObject | None = None
+    ) -> bool:
+        """
+        Checks if the organization has access to Seer for the given data category and seat object.
+        """
+        return True

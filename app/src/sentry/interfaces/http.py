@@ -1,0 +1,158 @@
+__all__ = ("Http",)
+
+from collections.abc import Mapping
+from typing import Any, Self
+
+from django.utils.translation import gettext as _
+
+from sentry.interfaces.base import Interface
+from sentry.utils.json import prune_empty_keys
+from sentry.utils.safe import get_path, safe_urlencode
+from sentry.web.helpers import render_to_string
+
+
+class Http(Interface):
+    """
+    The Request information is stored in the Http interface. Two arguments
+    are required: ``url`` and ``method``.
+
+    The ``env`` variable is a compounded dictionary of HTTP headers as well
+    as environment information passed from the webserver. Sentry will explicitly
+    look for ``REMOTE_ADDR`` in ``env`` for things which require an IP address.
+
+    The ``data`` variable should only contain the request body (not the query
+    string). It can either be a dictionary (for standard HTTP requests) or a
+    raw request body.
+
+    >>>  {
+    >>>     "url": "http://absolute.uri/foo",
+    >>>     "method": "POST",
+    >>>     "data": "foo=bar",
+    >>>     "query_string": "hello=world",
+    >>>     "cookies": "foo=bar",
+    >>>     "headers": [
+    >>>         ["Content-Type", "text/html"]
+    >>>     ],
+    >>>     "env": {
+    >>>         "REMOTE_ADDR": "192.168.0.1"
+    >>>     }
+    >>>  }
+
+    .. note:: This interface can be passed as the 'request' key in addition
+              to the full interface path.
+    """
+
+    display_score = 1000
+    score = 800
+    path = "request"
+
+    FORM_TYPE = "application/x-www-form-urlencoded"
+
+    @classmethod
+    def to_python(cls, data: dict[str, Any]) -> Self | None:
+        data.setdefault("query_string", [])
+        for key in (
+            "api_target",
+            "method",
+            "url",
+            "fragment",
+            "cookies",
+            "headers",
+            "data",
+            "env",
+            "inferred_content_type",
+        ):
+            data.setdefault(key, None)
+
+        return super().to_python(data)
+
+    def to_json(self) -> dict[str, Any]:
+        return prune_empty_keys(
+            {
+                "apiTarget": self.api_target,
+                "method": self.method,
+                "url": self.url,
+                "query_string": self.query_string or None,
+                "fragment": self.fragment or None,
+                "cookies": self.cookies or None,
+                "headers": self.headers or None,
+                "data": self.data,
+                "env": self.env or None,
+                "inferred_content_type": self.inferred_content_type,
+            }
+        )
+
+    @property
+    def full_url(self) -> str | None:
+        url = self.url
+        if url:
+            if self.query_string:
+                url = url + "?" + safe_urlencode(get_path(self.query_string, filter=True))
+            if self.fragment:
+                url = url + "#" + self.fragment
+        return url
+
+    def to_email_html(self, event: Any, **kwargs: Any) -> str:
+        return render_to_string(
+            "sentry/partial/interfaces/http_email.html",
+            {
+                "event": event,
+                "url": self.full_url,
+                "short_url": self.url,
+                "method": self.method,
+                "query_string": safe_urlencode(get_path(self.query_string, filter=True)),
+                "fragment": self.fragment,
+            },
+        )
+
+    def get_title(self) -> str:
+        return _("Request")
+
+    def get_api_context(
+        self, is_public: bool = False, platform: str | None = None
+    ) -> Mapping[str, Any]:
+        if is_public:
+            return {}
+
+        cookies = self.cookies or ()
+        if isinstance(cookies, dict):
+            cookies = sorted(self.cookies.items())
+
+        headers = self.headers or ()
+        if isinstance(headers, dict):
+            headers = sorted(self.headers.items())
+
+        data = {
+            "apiTarget": self.api_target,
+            "method": self.method,
+            "url": self.url,
+            "query": self.query_string,
+            "fragment": self.fragment,
+            "data": self.data,
+            "headers": headers,
+            "cookies": cookies,
+            "env": self.env or None,
+            "inferredContentType": self.inferred_content_type,
+        }
+        return data
+
+    def get_api_meta(
+        self,
+        meta: Mapping[str, Any],
+        is_public: bool = False,
+        platform: str | None = None,
+    ) -> Mapping[str, Any] | None:
+        if is_public:
+            return None
+
+        return {
+            "": meta.get(""),
+            "apiTarget": meta.get("api_target"),
+            "method": meta.get("method"),
+            "url": meta.get("url"),
+            "query": meta.get("query_string"),
+            "data": meta.get("data"),
+            "headers": meta.get("headers"),
+            "cookies": meta.get("cookies"),
+            "env": meta.get("env"),
+        }

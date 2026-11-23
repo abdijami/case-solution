@@ -1,0 +1,886 @@
+from __future__ import annotations
+
+import logging
+import os
+import sys
+import time
+from typing import IO, Any
+
+import click
+from django.conf import settings
+
+from sentry.runner import gc_metrics
+from sentry.silo.patches.silo_aware_transaction_patch import patch_silo_aware_atomic
+from sentry.utils import warnings
+from sentry.utils.arroyo import initialize_arroyo_main
+from sentry.utils.sdk import configure_sdk
+from sentry.utils.security.encrypted_field_key_store import initialize_encrypted_field_key_store
+from sentry.utils.warnings import DeprecatedSettingWarning
+
+
+class ConfigurationError(ValueError, click.ClickException):
+    def show(self, file: IO[str] | None = None) -> None:
+        if file is None:
+            from click._compat import get_text_stderr
+
+            file = get_text_stderr()
+        click.secho(f"!! Configuration error: {self!r}", file=file, fg="red")
+
+
+def register_plugins(settings: Any, raise_on_plugin_load_failure: bool = False) -> None:
+    from sentry.integrations.manager import default_manager as integrations
+    from sentry.utils.imports import import_string
+
+    for integration_path in settings.SENTRY_DEFAULT_INTEGRATIONS:
+        try:
+            integration_cls = import_string(integration_path)
+        except Exception:
+            import traceback
+
+            click.echo(
+                f"Failed to load integration {integration_path!r}:\n{traceback.format_exc()}",
+                err=True,
+            )
+        else:
+            integrations.register(integration_cls)
+
+    for integration in integrations.all():
+        try:
+            integration.setup()
+        except AttributeError:
+            pass
+
+
+def initialize_receivers() -> None:
+    # force signal registration
+    import sentry.receivers  # NOQA
+
+
+def get_asset_version(settings: Any) -> str:
+    path = os.path.join(settings.STATIC_ROOT, "version")
+    try:
+        with open(path) as fp:
+            return fp.read().strip()
+    except OSError:
+        from time import time
+
+        return str(int(time()))
+
+
+# Options which must get extracted into Django settings while
+# bootstrapping. Everything else will get validated and used
+# as a part of OptionsManager.
+options_mapper = {
+    # 'cache.backend': 'SENTRY_CACHE',
+    # 'cache.options': 'SENTRY_CACHE_OPTIONS',
+    # 'system.debug': 'DEBUG',
+    "system.secret-key": "SECRET_KEY",
+    "mail.backend": "EMAIL_BACKEND",
+    "mail.host": "EMAIL_HOST",
+    "mail.port": "EMAIL_PORT",
+    "mail.username": "EMAIL_HOST_USER",
+    "mail.password": "EMAIL_HOST_PASSWORD",
+    "mail.use-tls": "EMAIL_USE_TLS",
+    "mail.use-ssl": "EMAIL_USE_SSL",
+    "mail.from": "SERVER_EMAIL",
+    "mail.subject-prefix": "EMAIL_SUBJECT_PREFIX",
+    "github-login.client-id": "GITHUB_APP_ID",
+    "github-login.client-secret": "GITHUB_API_SECRET",
+    "github-login.require-verified-email": "GITHUB_REQUIRE_VERIFIED_EMAIL",
+    "github-login.base-domain": "GITHUB_BASE_DOMAIN",
+    "github-login.api-domain": "GITHUB_API_DOMAIN",
+    "github-login.extended-permissions": "GITHUB_EXTENDED_PERMISSIONS",
+    "github-login.organization": "GITHUB_ORGANIZATION",
+}
+
+# Backward-compat promotion for self-hosted: config.yml keys that were migrated
+# to Django settings still work when SENTRY_SELF_HOSTED is True.
+self_hosted_options_mapper = {
+    "system.base-hostname": "SENTRY_BASE_HOSTNAME",
+    "system.organization-base-hostname": "SENTRY_ORGANIZATION_BASE_HOSTNAME",
+    "system.organization-url-template": "SENTRY_ORGANIZATION_URL_TEMPLATE",
+    "system.region-api-url-template": "SENTRY_REGION_API_URL_TEMPLATE",
+    "intercom.sentry-api-secret": "SENTRY_INTERCOM_API_SECRET",
+    "relay.static_auth": "SENTRY_RELAY_STATIC_AUTH",
+    "objectstore.config": "SENTRY_OBJECTSTORE_CONFIG",
+    "analytics.backend": "SENTRY_ANALYTICS_BACKEND",
+    "analytics.options": "SENTRY_ANALYTICS_OPTIONS",
+    "mail.list-namespace": "SENTRY_MAIL_LIST_NAMESPACE",
+    "filestore.backend": "SENTRY_FILE_STORAGE_BACKEND",
+    "filestore.options": "SENTRY_FILE_STORAGE_CONFIG",
+    "filestore.relocation-backend": "SENTRY_RELOCATION_FILE_STORAGE_BACKEND",
+    "filestore.relocation-options": "SENTRY_RELOCATION_FILE_STORAGE_CONFIG",
+    "filestore.profiles-backend": "SENTRY_PROFILES_FILE_STORAGE_BACKEND",
+    "filestore.profiles-options": "SENTRY_PROFILES_FILE_STORAGE_CONFIG",
+    "filestore.control.backend": "SENTRY_CONTROL_FILE_STORAGE_BACKEND",
+    "filestore.control.options": "SENTRY_CONTROL_FILE_STORAGE_CONFIG",
+}
+
+migrated_options_mapper = {
+    "auth-fly.client-secret": "SENTRY_AUTH_FLY_CLIENT_SECRET",
+    "auth-google.client-secret": "SENTRY_AUTH_GOOGLE_CLIENT_SECRET",
+    "aws-lambda.secret-access-key": "SENTRY_AWS_LAMBDA_SECRET_ACCESS_KEY",
+    "codecov.signing_secret": "SENTRY_CODECOV_SIGNING_SECRET",
+    "cursor-origin-app.private-key": "SENTRY_CURSOR_ORIGIN_APP_PRIVATE_KEY",
+    "discord.bot-token": "SENTRY_DISCORD_BOT_TOKEN",
+    "discord.client-secret": "SENTRY_DISCORD_CLIENT_SECRET",
+    "gcp.client-secret": "SENTRY_GCP_CLIENT_SECRET",
+    "github-app.client-secret": "SENTRY_GITHUB_APP_CLIENT_SECRET",
+    "github-app.private-key": "SENTRY_GITHUB_APP_PRIVATE_KEY",
+    "github-app.webhook-secret": "SENTRY_GITHUB_APP_WEBHOOK_SECRET",
+    "mail.mailgun-api-key": "SENTRY_MAILGUN_API_KEY",
+    "msteams.client-secret": "SENTRY_MSTEAMS_CLIENT_SECRET",
+    "slack.client-secret": "SENTRY_SLACK_CLIENT_SECRET",
+    "slack.signing-secret": "SENTRY_SLACK_SIGNING_SECRET",
+    "slack-staging.client-secret": "SENTRY_SLACK_STAGING_CLIENT_SECRET",
+    "slack-staging.signing-secret": "SENTRY_SLACK_STAGING_SIGNING_SECRET",
+    "slack.verification-token": "SENTRY_SLACK_VERIFICATION_TOKEN",
+    "sms.twilio-token": "SENTRY_SMS_TWILIO_TOKEN",
+    "vercel.client-secret": "SENTRY_VERCEL_CLIENT_SECRET",
+    "vsts.client-secret": "SENTRY_VSTS_CLIENT_SECRET",
+    "vsts-limited.client-secret": "SENTRY_VSTS_LIMITED_CLIENT_SECRET",
+    "vsts_new.client-secret": "SENTRY_VSTS_NEW_CLIENT_SECRET",
+    "auth-fly.client-id": "SENTRY_AUTH_FLY_CLIENT_ID",
+    "auth-google.client-id": "SENTRY_AUTH_GOOGLE_CLIENT_ID",
+    "msteams.app-id": "SENTRY_MSTEAMS_APP_ID",
+    "sms.backend": "SENTRY_SMS_BACKEND",
+    "github-app.id": "SENTRY_GITHUB_APP_ID",
+    "github-app.name": "SENTRY_GITHUB_APP_NAME",
+    "github-app.client-id": "SENTRY_GITHUB_APP_CLIENT_ID",
+    "github-console-sdk-app.id": "SENTRY_GITHUB_CONSOLE_SDK_APP_ID",
+    "slack.client-id": "SENTRY_SLACK_CLIENT_ID",
+    "slack-staging.client-id": "SENTRY_SLACK_STAGING_CLIENT_ID",
+    "msteams.client-id": "SENTRY_MSTEAMS_CLIENT_ID",
+    "msteams.tenant-id": "SENTRY_MSTEAMS_TENANT_ID",
+    "vercel.client-id": "SENTRY_VERCEL_CLIENT_ID",
+    "discord.application-id": "SENTRY_DISCORD_APPLICATION_ID",
+    "discord.public-key": "SENTRY_DISCORD_PUBLIC_KEY",
+    "gcp.client-id": "SENTRY_GCP_CLIENT_ID",
+    "vsts.client-id": "SENTRY_VSTS_CLIENT_ID",
+    "vsts-limited.client-id": "SENTRY_VSTS_LIMITED_CLIENT_ID",
+    "vsts_new.client-id": "SENTRY_VSTS_NEW_CLIENT_ID",
+    "aws-lambda.access-key-id": "SENTRY_AWS_LAMBDA_ACCESS_KEY_ID",
+    "aws-lambda.account-number": "SENTRY_AWS_LAMBDA_ACCOUNT_NUMBER",
+    "aws-lambda.cloudformation-url": "SENTRY_AWS_LAMBDA_CLOUDFORMATION_URL",
+    "pagerduty.app-id": "SENTRY_PAGERDUTY_APP_ID",
+    "cursor-origin-app.id": "SENTRY_CURSOR_ORIGIN_APP_ID",
+    "system.internal-url-prefix": "SENTRY_SYSTEM_INTERNAL_URL_PREFIX",
+    "symbolicator.enabled": "SENTRY_SYMBOLICATOR_ENABLED",
+    "symbolicator.options": "SENTRY_SYMBOLICATOR_OPTIONS",
+    "symbolserver.enabled": "SENTRY_SYMBOLSERVER_ENABLED",
+    "symbolserver.options": "SENTRY_SYMBOLSERVER_OPTIONS",
+    "replay.storage.backend": "SENTRY_REPLAY_STORAGE_BACKEND",
+    "replay.storage.options": "SENTRY_REPLAY_STORAGE_OPTIONS",
+    "chart-rendering.enabled": "SENTRY_CHART_RENDERING_ENABLED",
+    "chart-rendering.chartcuterie": "SENTRY_CHART_RENDERING_CHARTCUTERIE",
+    "chart-rendering.storage.backend": "SENTRY_CHART_RENDERING_STORAGE_BACKEND",
+    "chart-rendering.storage.options": "SENTRY_CHART_RENDERING_STORAGE_OPTIONS",
+    "dsym.cache-path": "SENTRY_DSYM_CACHE_PATH",
+    "releasefile.cache-path": "SENTRY_RELEASEFILE_CACHE_PATH",
+    "mail.enable-replies": "SENTRY_MAIL_ENABLE_REPLIES",
+    "mail.reply-hostname": "SENTRY_MAIL_REPLY_HOSTNAME",
+    "u2f.facets": "SENTRY_U2F_FACETS",
+    "sms.twilio-account": "SENTRY_SMS_TWILIO_ACCOUNT",
+    "sms.twilio-number": "SENTRY_SMS_TWILIO_NUMBER",
+}
+
+# Existing mapped settings used registered defaults during bootstrap. Initialize
+# them only after copying explicitly configured settings back into option keys,
+# so defaults never create synthetic login keys that override app credentials.
+legacy_mapped_settings_defaults: dict[str, str | bool | list[str]] = {
+    "EMAIL_BACKEND": "smtp",
+    "EMAIL_SUBJECT_PREFIX": "[Sentry]",
+    "GITHUB_APP_ID": "",
+    "GITHUB_API_SECRET": "",
+    "GITHUB_REQUIRE_VERIFIED_EMAIL": False,
+    "GITHUB_BASE_DOMAIN": "github.com",
+    "GITHUB_API_DOMAIN": "api.github.com",
+    "GITHUB_EXTENDED_PERMISSIONS": [],
+    "GITHUB_ORGANIZATION": "",
+}
+
+
+def bootstrap_options(settings: Any, config: str | None = None) -> None:
+    """
+    Quickly bootstrap options that come in from a config file
+    and convert options into Django settings that are
+    required to even initialize the rest of the app.
+    """
+    # Make sure our options have gotten registered
+    from sentry.options import load_defaults
+
+    load_defaults()
+
+    if config is not None:
+        # Attempt to load our config yaml file
+        from yaml.parser import ParserError
+        from yaml.scanner import ScannerError
+
+        from sentry.utils.yaml import safe_load
+
+        try:
+            with open(config, "rb") as fp:
+                options = safe_load(fp)
+        except OSError:
+            # Gracefully fail if yaml file doesn't exist
+            options = {}
+        except (AttributeError, ParserError, ScannerError) as e:
+            raise ConfigurationError("Malformed config.yml file: %s" % str(e))
+
+        # Empty options file, so fail gracefully
+        if options is None:
+            options = {}
+        # Options needs to be a dict
+        elif not isinstance(options, dict):
+            raise ConfigurationError("Malformed config.yml file")
+    else:
+        options = {}
+
+    from sentry.conf.server import DEAD
+
+    # First move options from settings into options
+    for k, v in options_mapper.items():
+        if (
+            settings.SENTRY_SINGLE_ORGANIZATION
+            and not settings.SENTRY_SELF_HOSTED
+            and k in ("github-app.client-id", "github-app.client-secret")
+        ):
+            continue
+        # A modern credential pair owns empty partners. Explicit app option
+        # keys also take precedence over synthesized legacy login values.
+        if (
+            settings.SENTRY_SINGLE_ORGANIZATION
+            and k in ("github-app.client-id", "github-app.client-secret")
+            and k not in options
+            and (
+                k in settings.SENTRY_OPTIONS
+                or settings.SENTRY_GITHUB_APP_CLIENT_ID
+                or settings.SENTRY_GITHUB_APP_CLIENT_SECRET
+            )
+        ):
+            continue
+        if getattr(settings, v, DEAD) is not DEAD and k not in options:
+            warnings.warn(DeprecatedSettingWarning(options_mapper[k], "SENTRY_OPTIONS['%s']" % k))
+            options[k] = getattr(settings, v)
+
+    # Stuff everything else into SENTRY_OPTIONS
+    # these will be validated later after bootstrapping
+    for k, v in options.items():
+        settings.SENTRY_OPTIONS[k] = v
+
+    # Now go back through all of SENTRY_OPTIONS and promote
+    # back into settings. This catches the case when values are defined
+    # only in SENTRY_OPTIONS and no config.yml file
+    for setting_name, default in legacy_mapped_settings_defaults.items():
+        if getattr(settings, setting_name, DEAD) is DEAD:
+            if setting_name == "EMAIL_BACKEND":
+                default = settings.SENTRY_EMAIL_BACKEND_ALIASES.get(default, default)
+            setattr(settings, setting_name, default)
+
+    effective_mapper = (
+        {**options_mapper, **self_hosted_options_mapper}
+        if settings.SENTRY_SELF_HOSTED
+        else options_mapper
+    )
+    for o in (settings.SENTRY_DEFAULT_OPTIONS, settings.SENTRY_OPTIONS):
+        for k, v in o.items():
+            if k in effective_mapper:
+                # Map the mail.backend aliases to something Django understands
+                if k == "mail.backend":
+                    try:
+                        v = settings.SENTRY_EMAIL_BACKEND_ALIASES[v]
+                    except KeyError:
+                        pass
+                # Escalate the few needed to actually get the app bootstrapped into settings
+                setattr(settings, effective_mapper[k], v)
+
+    if settings.SENTRY_SELF_HOSTED:
+        for k, v in settings.SENTRY_OPTIONS.items():
+            if k in migrated_options_mapper and v is not None:
+                setattr(settings, migrated_options_mapper[k], v)
+
+    settings.SENTRY_GITHUB_LOGIN_CLIENT_ID = settings.SENTRY_OPTIONS.get(
+        "github-login.client-id", settings.GITHUB_APP_ID
+    )
+
+    # Single organization mode reuses the GitHub integration app for SSO. The
+    # remap in initialize_app handles the option key; this handles the setting.
+    if settings.SENTRY_SINGLE_ORGANIZATION:
+        if not settings.SENTRY_SELF_HOSTED:
+            settings.GITHUB_APP_ID = settings.SENTRY_GITHUB_APP_CLIENT_ID
+            settings.GITHUB_API_SECRET = settings.SENTRY_GITHUB_APP_CLIENT_SECRET
+        else:
+            if (
+                "github-app.client-secret" not in settings.SENTRY_OPTIONS
+                and settings.SENTRY_GITHUB_APP_CLIENT_SECRET
+            ):
+                settings.GITHUB_API_SECRET = settings.SENTRY_GITHUB_APP_CLIENT_SECRET
+            if (
+                "github-app.client-id" not in settings.SENTRY_OPTIONS
+                and settings.SENTRY_GITHUB_APP_CLIENT_ID
+            ):
+                settings.GITHUB_APP_ID = settings.SENTRY_GITHUB_APP_CLIENT_ID
+
+
+def configure_structlog() -> None:
+    """
+    Make structlog comply with all of our options.
+    """
+    import logging.config
+
+    import structlog
+    from django.conf import settings
+
+    from sentry.logging import LoggingFormat
+
+    kwargs: dict[str, Any] = {
+        "wrapper_class": structlog.stdlib.BoundLogger,
+        "cache_logger_on_first_use": True,
+        "processors": [
+            structlog.stdlib.add_log_level,
+            structlog.stdlib.PositionalArgumentsFormatter(),
+            structlog.processors.format_exc_info,
+        ],
+    }
+
+    fmt = settings.SENTRY_LOGGING_FORMAT
+
+    if fmt == LoggingFormat.HUMAN:
+        from sentry.logging.handlers import HumanRenderer
+
+        kwargs["processors"].extend(
+            [structlog.processors.ExceptionPrettyPrinter(), HumanRenderer()]
+        )
+    elif fmt == LoggingFormat.MACHINE:
+        from sentry.logging.handlers import JSONRenderer
+
+        kwargs["processors"].append(JSONRenderer())
+
+    is_s4s = os.environ.get("CUSTOMER_ID") == "sentry4sentry"
+    if is_s4s:
+        kwargs["logger_factory"] = structlog.PrintLoggerFactory(sys.stderr)
+
+    structlog.configure(**kwargs)
+
+    if is_s4s:
+        logging.info("Writing logs to stderr. Expected only in s4s")
+
+    lvl = os.environ.get("SENTRY_LOG_LEVEL")
+
+    if lvl and lvl not in logging._nameToLevel:
+        raise AttributeError("%s is not a valid logging level." % lvl)
+
+    settings.LOGGING["root"].update({"level": lvl or settings.LOGGING["default_level"]})
+
+    if lvl:
+        for logger in settings.LOGGING["overridable"]:
+            try:
+                settings.LOGGING["loggers"][logger].update({"level": lvl})
+            except KeyError:
+                raise KeyError("%s is not a defined logger." % logger)
+
+    logging.config.dictConfig(settings.LOGGING)
+
+
+def show_big_error(message: str | list[str]) -> None:
+    if isinstance(message, str):
+        lines = message.strip().splitlines()
+    else:
+        lines = message
+    maxline = max(map(len, lines))
+    click.echo("", err=True)
+    click.secho("!!!{}!!!".format("!" * min(maxline, 80)), err=True, fg="red")
+    click.secho("!! %s !!" % "".center(maxline), err=True, fg="red")
+    for line in lines:
+        click.secho("!! %s !!" % line.center(maxline), err=True, fg="red")
+    click.secho("!! %s !!" % "".center(maxline), err=True, fg="red")
+    click.secho("!!!{}!!!".format("!" * min(maxline, 80)), err=True, fg="red")
+    click.echo("", err=True)
+
+
+def initialize_app(config: dict[str, Any], skip_service_validation: bool = False) -> None:
+    settings = config["settings"]
+
+    # Instrumentation to diagnose slow/hanging startup (e.g. the process-spans
+    # flusher subprocess timing out during configure()). Opt-in via the
+    # SENTRY_TRACE_STARTUP env var. Logging isn't configured until
+    # configure_structlog() runs partway through this function, so emit
+    # breadcrumbs straight to stderr with cumulative timing.
+    _trace_startup = bool(os.environ.get("SENTRY_TRACE_STARTUP"))
+    _init_start = time.monotonic()
+
+    def _trace(step: str) -> None:
+        if not _trace_startup:
+            return
+        sys.stderr.write(f"[initialize_app] +{time.monotonic() - _init_start:6.1f}s {step}\n")
+        sys.stderr.flush()
+
+    _trace("start")
+
+    # Just reuse the integration app for Single Org / Self-Hosted as
+    # it doesn't make much sense to use 2 separate apps for SSO and
+    # integration.
+    if settings.SENTRY_SINGLE_ORGANIZATION and settings.SENTRY_SELF_HOSTED:
+        options_mapper.update(
+            {
+                "github-app.client-id": "GITHUB_APP_ID",
+                "github-app.client-secret": "GITHUB_API_SECRET",
+            }
+        )
+
+    _trace("bootstrap_options")
+    bootstrap_options(settings, config["options"])
+
+    # The SENTRY_LOG_FORMAT env var (e.g. the `--logformat` CLI flag) overrides
+    # the SENTRY_LOGGING_FORMAT setting from server.py.
+    fmt_from_env = os.environ.get("SENTRY_LOG_FORMAT")
+    if fmt_from_env:
+        settings.SENTRY_LOGGING_FORMAT = fmt_from_env.lower()
+
+    logging.raiseExceptions = settings.DEBUG
+
+    _trace("configure_structlog")
+    configure_structlog()
+
+    # Commonly setups don't correctly configure themselves for production envs
+    # so lets try to provide a bit more guidance
+    if settings.TASKWORKER_ALWAYS_EAGER and not settings.DEBUG:
+        warnings.warn(
+            "Sentry is configured to run asynchronous tasks in-process. "
+            "This is not recommended within production environments. "
+            "See https://develop.sentry.dev/backend/application/domains/tasks/ for more information."
+        )
+
+    if settings.SENTRY_SINGLE_ORGANIZATION:
+        settings.SENTRY_FEATURES["organizations:create"] = False
+
+    if not hasattr(settings, "SUDO_COOKIE_SECURE"):
+        settings.SUDO_COOKIE_SECURE = getattr(settings, "SESSION_COOKIE_SECURE", False)
+    if not hasattr(settings, "SUDO_COOKIE_DOMAIN"):
+        settings.SUDO_COOKIE_DOMAIN = getattr(settings, "SESSION_COOKIE_DOMAIN", None)
+    if not hasattr(settings, "SUDO_COOKIE_PATH"):
+        settings.SUDO_COOKIE_PATH = getattr(settings, "SESSION_COOKIE_PATH", "/")
+
+    if not hasattr(settings, "CSRF_COOKIE_SECURE"):
+        settings.CSRF_COOKIE_SECURE = getattr(settings, "SESSION_COOKIE_SECURE", False)
+    if not hasattr(settings, "CSRF_COOKIE_DOMAIN"):
+        settings.CSRF_COOKIE_DOMAIN = getattr(settings, "SESSION_COOKIE_DOMAIN", None)
+    if not hasattr(settings, "CSRF_COOKIE_PATH"):
+        settings.CSRF_COOKIE_PATH = getattr(settings, "SESSION_COOKIE_PATH", "/")
+
+    for key in settings.CACHES:
+        if not hasattr(settings.CACHES[key], "VERSION"):
+            settings.CACHES[key]["VERSION"] = 2
+
+    settings.ASSET_VERSION = get_asset_version(settings)
+    settings.STATIC_URL = settings.STATIC_URL.format(version=settings.ASSET_VERSION)
+
+    monkeypatch_drf_listfield_serializer_errors()
+
+    import django
+
+    _trace("django.setup")
+    django.setup()
+
+    _trace("monkeypatch_request_principal")
+    monkeypatch_request_principal()
+
+    _trace("validate_regions")
+    validate_regions(settings)
+
+    _trace("validate_outbox_config")
+    validate_outbox_config()
+
+    _trace("monkeypatch_django_migrations")
+    monkeypatch_django_migrations()
+
+    _trace("patch_silo_aware_atomic")
+    patch_silo_aware_atomic()
+
+    _trace("apply_legacy_settings")
+    apply_legacy_settings(settings)
+
+    _trace("bind_cache_to_option_store")
+    bind_cache_to_option_store()
+
+    _trace("register_plugins")
+    register_plugins(settings)
+
+    _trace("initialize_receivers")
+    initialize_receivers()
+
+    _trace("validate_options")
+    validate_options(settings)
+
+    _trace("validate_snuba")
+    validate_snuba()
+
+    _trace("configure_sdk")
+    configure_sdk()
+
+    _trace("setup_services")
+    setup_services(validate=not skip_service_validation)
+
+    _trace("import_grouptype")
+    import_grouptype()
+
+    _trace("initialize_arroyo_main")
+    initialize_arroyo_main()
+
+    # Encryption keys should be initialized before any
+    # database queries that use encrypted fields are made
+    _trace("initialize_encrypted_field_key_store")
+    initialize_encrypted_field_key_store()
+
+    # Hacky workaround to dynamically set the CSRF_TRUSTED_ORIGINS for self hosted
+    if settings.SENTRY_SELF_HOSTED and not settings.CSRF_TRUSTED_ORIGINS:
+        from sentry import options
+
+        system_url_prefix = options.get("system.url-prefix")
+        if system_url_prefix:
+            settings.CSRF_TRUSTED_ORIGINS = [system_url_prefix]
+        else:
+            # For first time users that have not yet set system url prefix, let's default to localhost url
+            settings.CSRF_TRUSTED_ORIGINS = ["http://localhost:9000", "http://127.0.0.1:9000"]
+
+    _trace("gc_metrics")
+    gc_metrics.install()
+
+    _trace("done")
+
+
+def setup_services(validate: bool = True) -> None:
+    from sentry import (
+        analytics,
+        buffer,
+        digests,
+        newsletter,
+        nodestore,
+        quotas,
+        ratelimits,
+        search,
+        tagstore,
+        tsdb,
+    )
+
+    service_list = (
+        analytics,
+        buffer,
+        digests,
+        newsletter,
+        nodestore,
+        quotas,
+        ratelimits,
+        search,
+        tagstore,
+        tsdb,
+    )
+
+    for service in service_list:
+        if validate:
+            try:
+                service.validate()
+            except AttributeError as e:
+                raise ConfigurationError(
+                    f"{service.__name__} service failed to call validate()\n{e}"
+                ).with_traceback(e.__traceback__)
+        try:
+            service.setup()
+        except AttributeError as e:
+            if not hasattr(service, "setup") or not callable(service.setup):
+                raise ConfigurationError(
+                    f"{service.__name__} service failed to call setup()\n{e}"
+                ).with_traceback(e.__traceback__)
+            raise
+
+
+def validate_options(settings: Any) -> None:
+    from sentry.options import default_manager
+
+    opts = {
+        k: v
+        for k, v in settings.SENTRY_OPTIONS.items()
+        if not (settings.SENTRY_SELF_HOSTED and k in self_hosted_options_mapper)
+        and not (settings.SENTRY_SELF_HOSTED and k in migrated_options_mapper)
+        and not (k in options_mapper and options_mapper[k] in legacy_mapped_settings_defaults)
+    }
+    default_manager.validate(opts, warn=True)
+
+
+def validate_regions(settings: Any) -> None:
+    from sentry.types.cell import load_from_config
+
+    if not settings.SENTRY_CELLS:
+        return
+
+    load_from_config(settings.SENTRY_CELLS, settings.SENTRY_LOCALITIES).validate_all()
+
+
+def monkeypatch_django_migrations() -> None:
+    # This monkeypatches django's migration executor with our own, which
+    # adds some small but important customizations.
+    from sentry.new_migrations.monkey import monkey_migrations
+
+    monkey_migrations()
+
+
+def monkeypatch_request_principal() -> None:
+    from sentry.auth.principal import patch_request_principal
+
+    patch_request_principal()
+
+
+def monkeypatch_drf_listfield_serializer_errors() -> None:
+    # This patches reverts https://github.com/encode/django-rest-framework/pull/5655,
+    # effectively we don't get that slight improvement
+    # in serializer error structure introduced in drf 3.8.x,
+    # This is simply the fastest way forward, otherwise
+    # frontend and sentry-cli needs updating and people using
+    # myriad other custom api clients may complain if we break
+    # their error handling.
+    # We're mainly focused on getting to Python 3.8, so this just isn't worth it.
+
+    from collections.abc import Mapping
+
+    from rest_framework.fields import ListField
+    from rest_framework.utils import html
+
+    def to_internal_value(self: ListField, data: Any) -> Any:
+        if html.is_html_input(data):
+            data = html.parse_html_list(data, default=[])
+        if isinstance(data, (str, Mapping)) or not hasattr(data, "__iter__"):
+            self.fail("not_a_list", input_type=type(data).__name__)
+        if not self.allow_empty and len(data) == 0:
+            self.fail("empty")
+        # Begin code retained from < drf 3.8.x.
+        return [self.child.run_validation(item) for item in data]
+        # End code retained from < drf 3.8.x.
+
+    ListField.to_internal_value = to_internal_value  # type: ignore[assignment,method-assign]
+
+    # We don't need to patch DictField since we don't use it
+    # at the time of patching. This is fine since anything newly
+    # introduced that does use it should prefer the better serializer
+    # errors.
+
+
+def bind_cache_to_option_store() -> None:
+    # The default ``OptionsStore`` instance is initialized without the cache
+    # backend attached. The store itself utilizes the cache during normal
+    # operation, but can't use the cache before the options (which typically
+    # includes the cache configuration) have been bootstrapped from the legacy
+    # settings and/or configuration values. Those options should have been
+    # loaded at this point, so we can plug in the cache backend before
+    # continuing to initialize the remainder of the application.
+    from django.core.cache import cache as default_cache
+    from django.core.cache import caches
+    from django.utils.connection import ConnectionProxy
+
+    from sentry.options import default_store
+
+    # Prefer the 'options' cache profile if defined.
+    # Use a ConnectionProxy as caches['options'] performs
+    # poorly in threaded contexts.
+    # We type ignore because django's types are lies and default_cache
+    # is ConnectionProxy.
+    backend = default_cache
+    if "options" in settings.CACHES:
+        backend = ConnectionProxy(caches, "options")  # type: ignore[assignment]
+    default_store.set_cache_impl(backend)
+
+
+def apply_legacy_settings(settings: Any) -> None:
+    from sentry import options
+
+    effective_mapper = (
+        {**options_mapper, **migrated_options_mapper, **self_hosted_options_mapper}
+        if settings.SENTRY_SELF_HOSTED
+        else options_mapper
+    )
+
+    for old, new in (
+        ("SENTRY_ADMIN_EMAIL", "system.admin-email"),
+        ("SENTRY_ENABLE_EMAIL_REPLIES", "mail.enable-replies"),
+        ("SENTRY_SMTP_HOSTNAME", "mail.reply-hostname"),
+        ("MAILGUN_API_KEY", "mail.mailgun-api-key"),
+        ("SENTRY_FILESTORE", "filestore.backend"),
+        ("SENTRY_FILESTORE_OPTIONS", "filestore.options"),
+        ("SENTRY_RELOCATION_BACKEND", "filestore.relocation-backend"),
+        ("SENTRY_RELOCATION_OPTIONS", "filestore.relocation-options"),
+        ("SENTRY_PROFILES_BACKEND", "filestore.profiles-backend"),
+        ("SENTRY_PROFILES_OPTIONS", "filestore.profiles-options"),
+        ("GOOGLE_CLIENT_ID", "auth-google.client-id"),
+        ("GOOGLE_CLIENT_SECRET", "auth-google.client-secret"),
+    ):
+        if new not in settings.SENTRY_OPTIONS and hasattr(settings, old):
+            if not settings.SENTRY_SELF_HOSTED and (
+                new in self_hosted_options_mapper or new in migrated_options_mapper
+            ):
+                continue
+            warnings.warn(DeprecatedSettingWarning(old, "SENTRY_OPTIONS['%s']" % new))
+            value = getattr(settings, old)
+            settings.SENTRY_OPTIONS[new] = value
+            if new in effective_mapper and (
+                new not in migrated_options_mapper or value is not None
+            ):
+                setattr(settings, effective_mapper[new], value)
+
+    if hasattr(settings, "SENTRY_REDIS_OPTIONS"):
+        if "redis.clusters" in settings.SENTRY_OPTIONS:
+            raise Exception(
+                "Cannot specify both SENTRY_OPTIONS['redis.clusters'] option and SENTRY_REDIS_OPTIONS setting."
+            )
+        else:
+            warnings.warn(
+                DeprecatedSettingWarning(
+                    "SENTRY_REDIS_OPTIONS",
+                    'SENTRY_OPTIONS["redis.clusters"]',
+                    removed_in_version="8.5",
+                )
+            )
+            settings.SENTRY_OPTIONS["redis.clusters"] = {"default": settings.SENTRY_REDIS_OPTIONS}
+    else:
+        # Provide backwards compatibility to plugins expecting there to be a
+        # ``SENTRY_REDIS_OPTIONS`` setting by using the ``default`` cluster.
+        # This should be removed when ``SENTRY_REDIS_OPTIONS`` is officially
+        # deprecated. (This also assumes ``FLAG_NOSTORE`` on the configuration
+        # option.)
+        settings.SENTRY_REDIS_OPTIONS = options.get("redis.clusters")["default"]
+
+    if settings.TIME_ZONE != "UTC":
+        # non-UTC timezones are not supported
+        show_big_error("TIME_ZONE should be set to UTC")
+
+    # Set ALLOWED_HOSTS if it's not already available
+    if not settings.ALLOWED_HOSTS:
+        settings.ALLOWED_HOSTS = ["*"]
+
+    if hasattr(settings, "SENTRY_ALLOW_REGISTRATION"):
+        warnings.warn(
+            DeprecatedSettingWarning(
+                "SENTRY_ALLOW_REGISTRATION", 'SENTRY_FEATURES["auth:register"]'
+            )
+        )
+        settings.SENTRY_FEATURES["auth:register"] = settings.SENTRY_ALLOW_REGISTRATION
+
+    settings.DEFAULT_FROM_EMAIL = settings.SENTRY_OPTIONS.get(
+        "mail.from", settings.SENTRY_DEFAULT_OPTIONS.get("mail.from")
+    )
+
+    # HACK(mattrobenolt): This is a one-off assertion for a system.secret-key value.
+    # If this becomes a pattern, we could add another flag to the OptionsManager to cover this, but for now
+    # this is the only value that should prevent the app from booting up. Currently FLAG_REQUIRED is used to
+    # trigger the Installation Wizard, not abort startup.
+    if not settings.SENTRY_OPTIONS.get("system.secret-key"):
+        raise ConfigurationError(
+            "`system.secret-key` MUST be set. Use 'sentry config generate-secret-key' to get one."
+        )
+
+
+def validate_snuba() -> None:
+    """
+    Make sure everything related to Snuba is in sync.
+
+    This covers a few cases:
+
+    * When you have features related to Snuba, you must also
+      have Snuba fully configured correctly to continue.
+    * If you have Snuba specific search/tagstore/tsdb backends,
+      you must also have a Snuba compatible eventstream backend
+      otherwise no data will be written into Snuba.
+    * If you only have Snuba related eventstream, yell that you
+      probably want the other backends otherwise things are weird.
+    """
+    if not settings.DEBUG:
+        return
+
+    has_all_snuba_required_backends = (
+        settings.SENTRY_SEARCH
+        in (
+            "sentry.search.snuba.EventsDatasetSnubaSearchBackend",
+            "sentry.utils.services.ServiceDelegator",
+        )
+        and settings.SENTRY_TAGSTORE == "sentry.tagstore.snuba.SnubaTagStorage"
+        and
+        # TODO(mattrobenolt): Remove ServiceDelegator check
+        settings.SENTRY_TSDB
+        in (
+            "sentry.tsdb.snuba.SnubaTSDB",
+            "sentry.tsdb.redissnuba.RedisSnubaTSDB",
+            "sentry.utils.services.ServiceDelegator",
+        )
+    )
+
+    eventstream_is_snuba = (
+        settings.SENTRY_EVENTSTREAM == "sentry.eventstream.snuba.SnubaEventStream"
+        or settings.SENTRY_EVENTSTREAM == "sentry.eventstream.kafka.KafkaEventStream"
+    )
+
+    # All good here, it doesn't matter what else is going on
+    if has_all_snuba_required_backends and eventstream_is_snuba:
+        return
+
+    if not eventstream_is_snuba:
+        show_big_error(
+            """
+It appears that you are requiring Snuba,
+but your SENTRY_EVENTSTREAM is not compatible.
+
+Current settings:
+
+SENTRY_SEARCH = %r
+SENTRY_TAGSTORE = %r
+SENTRY_TSDB = %r
+SENTRY_EVENTSTREAM = %r
+
+See: https://github.com/getsentry/snuba#sentry--snuba"""
+            % (
+                settings.SENTRY_SEARCH,
+                settings.SENTRY_TAGSTORE,
+                settings.SENTRY_TSDB,
+                settings.SENTRY_EVENTSTREAM,
+            )
+        )
+        raise ConfigurationError("Cannot continue without Snuba configured correctly.")
+
+    if eventstream_is_snuba and not has_all_snuba_required_backends:
+        show_big_error(
+            """
+You are using a Snuba compatible eventstream
+without configuring search/tagstore/tsdb also to use Snuba.
+This is probably not what you want.
+
+Current settings:
+
+SENTRY_SEARCH = %r
+SENTRY_TAGSTORE = %r
+SENTRY_TSDB = %r
+SENTRY_EVENTSTREAM = %r
+
+See: https://github.com/getsentry/snuba#sentry--snuba"""
+            % (
+                settings.SENTRY_SEARCH,
+                settings.SENTRY_TAGSTORE,
+                settings.SENTRY_TSDB,
+                settings.SENTRY_EVENTSTREAM,
+            )
+        )
+
+
+def validate_outbox_config() -> None:
+    from sentry.hybridcloud.models.outbox import CellOutboxBase, ControlOutboxBase
+    from sentry.issues.models.groupactionlogoutbox import GroupActionLogOutbox
+
+    for outbox_name in settings.SENTRY_HYBRIDCLOUD_OUTBOX_MODELS["CONTROL"]:
+        ControlOutboxBase.from_outbox_name(outbox_name)
+
+    for outbox_name in settings.SENTRY_HYBRIDCLOUD_OUTBOX_MODELS["CELL"]:
+        CellOutboxBase.from_outbox_name(outbox_name)
+
+    CellOutboxBase.from_outbox_name(GroupActionLogOutbox._meta.label)
+
+
+def import_grouptype() -> None:
+    from sentry.issues.grouptype import import_grouptype
+
+    import_grouptype()

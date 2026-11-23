@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from enum import IntEnum
+from typing import Any, ClassVar, Self
+
+from django.conf import settings
+from django.db import models
+from django.db.models.base import ModelBase
+from django.utils import timezone
+
+from sentry.backup.scopes import RelocationScope
+from sentry.constants import ObjectStatus
+from sentry.db.models import (
+    BoundedBigIntegerField,
+    BoundedPositiveIntegerField,
+    FlexibleForeignKey,
+    Model,
+    cell_silo_model,
+    sane_repr,
+)
+from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
+from sentry.db.models.fields.jsonfield import LegacyTextJSONField
+from sentry.db.models.manager.base import BaseManager
+from sentry.types.actor import Actor
+from sentry.utils.cache import cache
+
+
+class RuleSource(IntEnum):
+    ISSUE = 0
+    CRON_MONITOR = 1
+
+    @classmethod
+    def as_choices(cls) -> Sequence[tuple[int, str]]:
+        return (
+            (cls.ISSUE, "issue"),
+            (cls.CRON_MONITOR, "cron_monitor"),
+        )
+
+
+@cell_silo_model
+class Rule(Model):
+    __relocation_scope__ = RelocationScope.Organization
+
+    DEFAULT_CONDITION_MATCH = "all"  # any, all
+    DEFAULT_FILTER_MATCH = "all"  # match to apply on filters
+    DEFAULT_FREQUENCY = 30  # minutes
+
+    project = FlexibleForeignKey("sentry.Project")
+    environment_id = BoundedPositiveIntegerField(null=True)
+    # Shadow column for the in-progress widening of `environment_id` to int8; swapped
+    # into `environment_id` once backfilled. Nothing reads or writes it yet.
+    new_environment_id = BoundedBigIntegerField(null=True)
+    label = models.CharField(max_length=256)
+    # `data` contain all the specifics of the rule - conditions, actions, frequency, etc.
+    data = LegacyTextJSONField(default=dict)
+    status = BoundedPositiveIntegerField(
+        default=ObjectStatus.ACTIVE,
+        choices=((ObjectStatus.ACTIVE, "Active"), (ObjectStatus.DISABLED, "Disabled")),
+        db_index=True,
+    )
+    # source is currently used as a way to distinguish rules created specifically
+    # for use in other parts of the product (e.g. cron monitor alerting rules)
+    source = BoundedPositiveIntegerField(
+        default=RuleSource.ISSUE,
+        db_default=RuleSource.ISSUE,
+        choices=RuleSource.as_choices(),
+    )
+    owner_user_id = HybridCloudForeignKey[int | None, int | None](
+        settings.AUTH_USER_MODEL, null=True, on_delete="SET_NULL"
+    )
+    owner_team = FlexibleForeignKey("sentry.Team", null=True, on_delete=models.SET_NULL)
+
+    date_added = models.DateTimeField(default=timezone.now)
+
+    objects: ClassVar[BaseManager[Self]] = BaseManager(cache_fields=("pk",))
+
+    class Meta:
+        db_table = "sentry_rule"
+        app_label = "sentry"
+        indexes = (
+            models.Index(fields=("project", "status", "owner_team")),
+            models.Index(fields=("project", "status", "owner_user_id")),
+        )
+        constraints = (
+            models.CheckConstraint(
+                condition=(
+                    models.Q(owner_user_id__isnull=True, owner_team__isnull=False)
+                    | models.Q(owner_user_id__isnull=False, owner_team__isnull=True)
+                    | models.Q(owner_user_id__isnull=True, owner_team__isnull=True)
+                ),
+                name="rule_owner_user_or_team_check",
+            ),
+        )
+
+    __repr__ = sane_repr("project_id", "label")
+
+    @classmethod
+    def get_for_project(cls, project_id: int) -> list[Rule]:
+        cache_key = f"project:{project_id}:rules"
+        rules_list = cache.get(cache_key)
+        if rules_list is None:
+            rules_list = list(cls.objects.filter(project=project_id, status=ObjectStatus.ACTIVE))
+            cache.set(cache_key, rules_list, 60)
+        return rules_list
+
+    @property
+    def owner(self) -> Actor | None:
+        """Part of ActorOwned Protocol"""
+        return Actor.from_id(user_id=self.owner_user_id, team_id=self.owner_team_id)
+
+    @owner.setter
+    def owner(self, actor: Actor | None) -> None:
+        """Part of ActorOwned Protocol"""
+        setattr(self, "owner_team_id", None)
+        self.owner_user_id = None
+        if actor and actor.is_user:
+            self.owner_user_id = actor.id
+        if actor and actor.is_team:
+            self.owner_team_id = actor.id
+
+    def delete(
+        self, using: str | None = None, keep_parents: bool = False
+    ) -> tuple[int, dict[str, int]]:
+        rv = super().delete(using=using, keep_parents=keep_parents)
+        self._clear_project_rule_cache()
+        return rv
+
+    def save(
+        self,
+        *,
+        force_insert: bool | tuple[ModelBase, ...] = False,
+        force_update: bool = False,
+        using: str | None = None,
+        update_fields: Iterable[str] | None = None,
+    ) -> None:
+        super().save(
+            force_insert=force_insert,
+            force_update=force_update,
+            using=using,
+            update_fields=update_fields,
+        )
+        self._clear_project_rule_cache()
+
+    def _clear_project_rule_cache(self) -> None:
+        cache_key = f"project:{self.project_id}:rules"
+        cache.delete(cache_key)
+
+    def get_audit_log_data(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "data": self.data,
+            "status": self.status,
+            "environment": self.environment_id,
+        }
+
+    def get_rule_action_details_by_uuid(self, rule_action_uuid: str) -> dict[str, Any] | None:
+        actions = self.data.get("actions", None)
+        if not actions:
+            return None
+
+        for action in actions:
+            action_uuid = action.get("uuid", None)
+            if action_uuid is None:
+                # This should not happen, but because the data object is a dictionary, it's better to be safe
+                continue
+
+            if action_uuid == rule_action_uuid:
+                return action
+
+        return None

@@ -1,0 +1,204 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, ClassVar, cast
+
+from django.contrib.auth import REDIRECT_FIELD_NAME
+from django.contrib.auth.models import AnonymousUser
+from django.http.request import HttpRequest
+from django.urls import reverse
+from rest_framework import status
+from rest_framework.exceptions import APIException, PermissionDenied
+
+from sentry.models.organization import Organization
+from sentry.organizations.services.organization.model import RpcOrganization
+from sentry.users.models.user import User
+from sentry.users.services.user.model import RpcUser
+
+if TYPE_CHECKING:
+    from rest_framework.exceptions import _Detail
+from sentry.utils.auth import construct_link_with_query
+from sentry.utils.http import is_using_customer_domain
+
+
+class ResourceDoesNotExist(APIException):
+    status_code = status.HTTP_404_NOT_FOUND
+    default_detail = "The requested resource does not exist"
+
+
+class InsufficientScope(PermissionDenied):
+    """A token-authorized request denied for lacking the required scope.
+
+    Renders as an ordinary ``403`` (DRF's default ``PermissionDenied`` body is unchanged),
+    but advertises the required scopes via the RFC 6750 ``insufficient_scope`` challenge.
+    ``custom_exception_handler`` copies ``auth_header`` onto the ``WWW-Authenticate`` header.
+    """
+
+    def __init__(self, required_scopes: Iterable[str]) -> None:
+        super().__init__()
+        scope = " ".join(sorted(required_scopes))
+        self.auth_header = f'Bearer error="insufficient_scope", scope="{scope}"'
+
+
+# Set on the request by the scope check when a token is denied for insufficient scope, and
+# read by Endpoint.permission_denied to raise InsufficientScope. Lets has_permission stay a
+# plain bool while the view still emits the RFC 6750 challenge.
+INSUFFICIENT_SCOPE_ATTR = "_insufficient_scope_required"
+
+
+class SentryAPIException(APIException):
+    code = ""
+    message = ""
+    # The keys this exception's `extra` can carry. The API schema publishes them
+    # (sentry.apidocs.error_codes), and a test checks them against `__init__`.
+    extra_keys: ClassVar[tuple[str, ...]] = ()
+    # Whether the user can clear this error by acting in Sentry, such as logging in
+    # with SSO or confirming their password. Each 401 and 403 subclass sets it, and
+    # the API schema publishes it as `x-sentry-auth-challenge`.
+    auth_challenge: ClassVar[bool] = False
+
+    def __init__(
+        self,
+        code: str | None = None,
+        message: str | None = None,
+        detail: object = None,
+        **kwargs: object,
+    ) -> None:
+        # Note that we no longer call the base `__init__` here. This is because
+        # DRF now forces all detail messages that subclass `APIException` to a
+        # string, which breaks our format.
+        # https://www.django-rest-framework.org/community/3.0-announcement/#miscellaneous-notes
+        if detail is None:
+            detail = {
+                "code": code or self.code,
+                "message": message or self.message,
+                "extra": kwargs,
+            }
+
+        self.detail = cast("dict[str, _Detail]", {"detail": detail})
+
+
+class BadRequest(SentryAPIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "invalid-request"
+    message = "Invalid request"
+
+
+class ParameterValidationError(SentryAPIException):
+    status_code = status.HTTP_400_BAD_REQUEST
+    code = "parameter-validation-error"
+    extra_keys = ("context",)
+
+    def __init__(self, message: str, context: list[str] | None = None) -> None:
+        super().__init__(message=message, context=".".join(context or []))
+
+
+class SsoRequired(SentryAPIException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "sso-required"
+    auth_challenge = True
+    message = "Must login via SSO"
+    extra_keys = ("loginUrl", "organizationSlug")
+
+    def __init__(
+        self,
+        organization: Organization | RpcOrganization,
+        request: HttpRequest,
+        after_login_redirect: str | None = None,
+    ) -> None:
+        login_url = reverse("sentry-auth-organization", args=[organization.slug])
+        if is_using_customer_domain(request):
+            login_url = organization.absolute_url(path=login_url)
+
+        if after_login_redirect:
+            query_params = {REDIRECT_FIELD_NAME: after_login_redirect}
+            login_url = construct_link_with_query(path=login_url, query_params=query_params)
+
+        super().__init__(loginUrl=login_url, organizationSlug=organization.slug)
+
+
+class MemberDisabledOverLimit(SentryAPIException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "member-disabled-over-limit"
+    auth_challenge = True
+    message = "Organization over member limit"
+    extra_keys = ("next",)
+
+    def __init__(self, organization: Organization | RpcOrganization) -> None:
+        super().__init__(
+            next=reverse("sentry-organization-disabled-member", args=[organization.slug])
+        )
+
+
+class SuperuserRequired(SentryAPIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "superuser-required"
+    auth_challenge = True
+    message = "You need to re-authenticate for superuser."
+    # Only organization-scoped superuser checks pass it.
+    extra_keys = ("orgSlug",)
+
+
+class UserRequired(SentryAPIException):
+    """The caller has no user behind it, e.g. a service account, but this needs one."""
+
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "user-required"
+    auth_challenge = False
+    message = "This action requires a user."
+
+
+class StaffRequired(SentryAPIException):
+    status_code = status.HTTP_403_FORBIDDEN
+    code = "staff-required"
+    auth_challenge = True
+    message = "You need to re-authenticate for staff."
+
+
+class DataSecrecyError(SentryAPIException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "data-secrecy"
+    auth_challenge = False
+
+
+class SudoRequired(SentryAPIException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "sudo-required"
+    auth_challenge = True
+    message = "Account verification required."
+    extra_keys = ("username",)
+
+    def __init__(self, user: User | RpcUser | AnonymousUser) -> None:
+        super().__init__(username=user.username)
+
+
+class PrimaryEmailVerificationRequired(SentryAPIException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "primary-email-verification-required"
+    auth_challenge = True
+    message = "Primary email verification required."
+    extra_keys = ("username",)
+
+    def __init__(self, user: User | RpcUser | AnonymousUser) -> None:
+        super().__init__(username=user.username)
+
+
+class TwoFactorRequired(SentryAPIException):
+    status_code = status.HTTP_401_UNAUTHORIZED
+    code = "2fa-required"
+    auth_challenge = True
+    message = "Organization requires two-factor authentication to be enabled"
+
+
+class ConflictError(APIException):
+    status_code = status.HTTP_409_CONFLICT
+
+
+class InvalidRepository(Exception):
+    pass
+
+
+class RequestTimeout(SentryAPIException):
+    status_code = status.HTTP_408_REQUEST_TIMEOUT
+    code = "request-timeout"
+    message = "Proxied request timed out"

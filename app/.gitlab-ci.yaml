@@ -1,0 +1,142 @@
+
+include:
+  - project: 'cicd/gitlabci-templates'
+    ref: 'main'
+    file:
+      - build/kaniko-template.yml
+      - deploy/gitops-template.yml
+
+stages:
+  - test
+  - security
+  - validate
+  - build
+  - deploy
+
+# ---------------- VARIABLES ----------------
+
+.base_vars: &base_vars
+  GITOPS_LOGIN: ${GITOPS_BOT_LOGIN}
+  GITOPS_TOKEN: ${GITOPS_BOT_TOKEN}
+  TAG_ID: ${CI_COMMIT_SHORT_SHA}
+  TAG_BRANCH_NAME: "main"
+  TAG_BRANCH_REPO: "infrastructure"
+  TAG_BRANCH_URL: ${CI_SERVER_HOST}/${CI_PROJECT_ROOT_NAMESPACE}/infrastructure.git
+  BUILD_ARGS: ""
+  CONTEXT_PATH: ${CI_PROJECT_DIR}
+  DOCKERFILE_PATH: "${CI_PROJECT_DIR}/Dockerfile"
+
+.test_vars: &test_vars
+  <<: *base_vars
+  ENV: "test"
+  REGISTRY_URL: ${REGISTRY_URL_TEST}
+  REGISTRY_BASE64: ${REGISTRY_BASE64_TEST}
+  TAG_BRANCH_HELM_VAL: test-values/env-test.yaml
+
+.prod_vars: &prod_vars
+  <<: *base_vars
+  ENV: "prod"
+  REGISTRY_URL: ${REGISTRY_URL_PROD}
+  REGISTRY_BASE64: ${REGISTRY_BASE64_PROD}
+  TAG_BRANCH_HELM_VAL: prod-values/env-prod.yaml
+
+# ---------------- TEST ----------------
+
+test:
+  stage: test
+  tags:
+    - experimental
+  script:
+    - echo "Running tests..."
+    # Добавить команды тестирования проекта
+  only:
+    - test
+    - main
+    - master
+
+# ---------------- SECURITY ----------------
+
+security_scan:
+  stage: security
+  tags:
+    - experimental
+  script:
+    - echo "Running vulnerability scan..."
+    # Добавить запуск Trivy / SonarQube / другого сканера
+  only:
+    - test
+    - main
+    - master
+
+# ---------------- VALIDATE ----------------
+
+validate:
+  stage: validate
+  tags:
+    - experimental
+  script:
+    - echo "Validating project configuration..."
+    # Добавить Helm lint / YAML validation / другие проверки
+  only:
+    - test
+    - main
+    - master
+
+# ---------------- TEST BUILD & DEPLOY ----------------
+
+build_image:test:
+  stage: build
+  tags:
+    - experimental
+  extends:
+    - .build_kaniko
+  only:
+    - test
+  variables:
+    <<: *test_vars
+    IMAGE_NAME: "${REGISTRY_URL_TEST}/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}"
+
+deploy:test:
+  stage: deploy
+  tags:
+    - experimental
+  needs:
+    - build_image:new_test
+  extends:
+    - .gitops_image_tag
+  only:
+    - test
+  variables:
+    <<: *test_vars
+    IMAGE_NAME: "${REGISTRY_URL_TEST}/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}"
+
+# ---------------- PROD BUILD & DEPLOY ----------------
+
+build_image:prod:
+  stage: build
+  tags:
+    - experimental-prod
+  extends:
+    - .build_kaniko
+  only:
+    - main
+    - master
+  when: manual
+  variables:
+    <<: *prod_vars
+    IMAGE_NAME: "${REGISTRY_URL_PROD}/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}"
+
+deploy:prod:
+  stage: deploy
+  tags:
+    - experimental-prod
+  needs:
+    - build_image:new_prod
+  extends:
+    - .gitops_image_tag
+  only:
+    - main
+    - master
+  variables:
+    <<: *prod_vars
+    IMAGE_NAME: "${REGISTRY_URL_PROD}/${CI_PROJECT_NAMESPACE}/${CI_PROJECT_NAME}"
